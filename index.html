@@ -381,7 +381,7 @@ body.kds .skel{background:#20242A}
    UTILIDADES
    ===================================================================== */
 const DEMO = !CONFIG.SUPABASE_URL;
-const APP_VERSION = 'v1.6 · 16-nov';
+const APP_VERSION = 'v1.7 · 16-nov';
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -1652,7 +1652,9 @@ async function drawConfig() {
       <label class="f">URL del flujo HTTP del bistró</label><input class="inp" id="cfWeb" value="${esc(c.webhook_url || '')}" placeholder="https://…/workflows/…/triggers/manual/paths/invoke?…">
       <label class="f">URL pública de la app (para botones de los correos)</label><input class="inp" id="cfUrl" value="${esc(c.app_url || '')}" placeholder="https://usuario.github.io/bistro/">
       <p class="tiny muted">Flujo exclusivo del bistró.</p>
-      <button class="btn ghost sm" onclick="probarCorreo()">📨 Enviarme un correo de prueba</button></div>
+      <div class="row wrap" style="gap:8px"><button class="btn ghost sm" onclick="probarCorreo()">📨 Enviarme un correo de prueba</button>
+        <button class="btn ghost sm" onclick="diagnosticoCorreo()">🩺 Diagnóstico</button></div>
+      <div id="cfDiag"></div></div>
   </div>
   <div class="row mt2"><button class="btn acc" style="min-width:220px" onclick="guardarConfig()">💾 Guardar configuración</button></div>`;
   $('#cfLogo').onchange = async e => { const f = e.target.files[0]; if (!f) return; AD.logo = await comprimirLogo(await fileToDataURL(f)); $('#cfLogoPrev').innerHTML = `<img class="logo-prev" src="${AD.logo}">`; };
@@ -1663,7 +1665,28 @@ async function guardarConfig() {
     semanas_adelante: +$('#cfSem').value, notificar_listo: $('#cfNot').checked, webhook_url: $('#cfWeb').value.trim(), app_url: $('#cfUrl').value.trim() };
   try { await rpc('bistro_config_guardar', { p }); const r = await rpc('bistro_sesion'); S.cfg = r.config; aplicarMarca(); toast('Configuración guardada ✅', 'ok'); route(); } catch (e) { toast(errMsg(e), 'err'); }
 }
-async function probarCorreo() { try { await rpc('bistro_correo_prueba'); toast('Enviado. Revisa tu bandeja (puede tardar ~1 min).', 'ok', 5000); } catch (e) { toast(errMsg(e), 'err'); } }
+async function probarCorreo() {
+  try { await rpc('bistro_correo_prueba'); toast('Enviado a Power Automate. Revisando respuesta…', 'info', 4000); await sleep(5000); diagnosticoCorreo(); }
+  catch (e) { toast(errMsg(e), 'err'); }
+}
+async function diagnosticoCorreo() {
+  const box = $('#cfDiag'); if (!box) return; box.innerHTML = '<p class="small muted mt">Consultando…</p>';
+  let d; try { d = await rpc('bistro_correo_diagnostico'); } catch (e) { box.innerHTML = `<div class="risk">${esc(errMsg(e))}</div>`; return; }
+  const expl = r => {
+    if (r.error_msg) return `❌ ${esc(r.error_msg)}`;
+    if (r.timed_out) return '❌ Tiempo agotado: Power Automate no respondió.';
+    const s = r.status_code;
+    if (s >= 200 && s < 300) return '✅ Power Automate recibió la solicitud. Si no llegó el correo, revise el <b>historial de ejecuciones</b> del flujo (paso de Outlook) y la carpeta de correo no deseado.';
+    if (s === 401 || s === 403) return '❌ Acceso denegado: en el disparador ponga <b>Quién puede desencadenar el flujo = Cualquiera</b> y copie de nuevo la URL.';
+    if (s === 404) return '❌ URL no encontrada: copie la URL completa del disparador (incluye <code>sig=</code>) y verifique que el flujo esté <b>activado</b>.';
+    if (s === 400) return '❌ Solicitud rechazada: revise el esquema JSON del disparador (para, asunto, html).';
+    return `⚠️ Código ${s}`;
+  };
+  box.innerHTML = `<div class="mt small">
+    <div>${d.tiene_webhook ? '✅ URL del flujo guardada: <code>' + esc(d.webhook_inicio) + '…</code>' : '❌ No hay URL del flujo guardada. Péguela arriba y presione <b>Guardar configuración</b>.'}</div>
+    ${d.respuestas.length ? d.respuestas.map(r => `<div class="pl-row" style="display:block"><div class="tiny muted">#${r.id ?? ''} · ${r.created ? new Date(r.created).toLocaleString('es-CR') : ''} · código ${r.status_code ?? '—'}</div><div>${expl(r)}</div>${r.content && !(r.status_code >= 200 && r.status_code < 300) ? `<div class="tiny muted" style="word-break:break-all">${esc(r.content)}</div>` : ''}</div>`).join('')
+      : `<div class="risk">No hay ningún envío registrado. ${d.tiene_webhook ? 'Presione “Enviarme un correo de prueba”. Si sigue vacío, revise que la extensión <b>pg_net</b> esté encendida (Database → Extensions).' : ''}</div>`}</div>`;
+}
 
 /* ---------- reporte de consumo ---------- */
 async function drawReporte() {
@@ -1908,6 +1931,7 @@ const Demo = (() => {
       db.usuarios = db.usuarios.filter(u => u.id !== p_id); save(); return { ok: true };
     },
     bistro_cerrar_todas_sesiones({ p_token }) { req(auth(p_token), []); let n = 0; Object.keys(db.sesiones).forEach(k => { if (k !== p_token) { delete db.sesiones[k]; n++; } }); save(); return { ok: true, cerradas: n }; },
+    bistro_correo_diagnostico({ p_token }) { req(auth(p_token), []); return { tiene_webhook: !!db.cfg.webhook_url, webhook_inicio: (db.cfg.webhook_url || '').slice(0, 70), respuestas: [{ id: 1, status_code: 202, created: now() }, { id: 0, status_code: 401, created: now(), content: '{"error":{"code":"DirectApiAuthorizationRequired"}}' }] }; },
     bistro_config_admin({ p_token }) { req(auth(p_token), []); return db.cfg; },
     bistro_config_guardar({ p_token, p }) { req(auth(p_token), []); Object.assign(db.cfg, p, { logo: p.logo || null }); save(); return db.cfg; },
     bistro_correo_prueba({ p_token }) { const u = auth(p_token); req(u, []); mail(u.correo, 'Prueba de correo · Bistró'); return { ok: true }; },
