@@ -501,7 +501,11 @@ const ERR = {
   FECHA_PASADA: 'No se puede pedir para una fecha pasada.', NO_DISPONIBLE: 'Uno de los platos ya no está disponible ese día.',
   TIEMPO_INVALIDO: 'Ese tiempo de comida no está disponible.', TRANSICION_INVALIDA: 'Ese cambio de estado no está permitido.',
   SOLO_SERVICIO: 'Solo se puede editar cuando el pedido está listo o en servicio.', TIENE_PEDIDOS: 'Tiene pedidos registrados: mejor desactívelo.',
-  NO_QUITAR_ADMIN_PROPIO: 'No puedes quitarte el rol de admin a ti mismo.', NO_ELIMINAR_PROPIO: 'No puedes eliminar tu propia cuenta.'
+  NO_QUITAR_ADMIN_PROPIO: 'No puedes quitarte el rol de admin a ti mismo.',
+  PS_INVALIDO: 'Correo o PIN de seguridad incorrectos.', PS_BLOQUEADO: 'Demasiados intentos con el PIN de seguridad. Espera 30 minutos.',
+  PS_FORMATO: 'El PIN de seguridad debe tener de 6 a 8 números.', PS_ACTUAL: 'El PIN de seguridad actual no es correcto.',
+  ACCION_PROPIA: 'Esta acción no se puede aplicar a tu propia cuenta (evita dejarte sin acceso). Usa tu Perfil.',
+  SIN_CORREO_CONFIG: 'Primero configura y prueba el flujo de correos (Admin › Configuración); sin él no llegarían PIN ni contraseñas.', NO_ELIMINAR_PROPIO: 'No puedes eliminar tu propia cuenta.'
 };
 function errMsg(e) {
   const m = String(e?.message || e || '');
@@ -580,14 +584,14 @@ async function boot() {
       const r = await rpc('bistro_sesion', { p_token: S.token });
       S.user = r.usuario; S.cfg = r.config; S.expira = r.expira; aplicarMarca();
       if (S.user.foto_v) cargarFotos([{ usuario_id: S.user.id, foto_v: S.user.foto_v }]);
-      route(); if (S.user.debe_cambiar) forzarCambioPassword(); return;
+      route(); revisarObligatorios(); return;
     } catch (e) { localStorage.removeItem('bistro_token'); S.token = null; }
   }
   S.user = null; renderLogin();
 }
 function sesionIniciada(r) {
   S.token = r.token; S.user = r.usuario; S.expira = r.expira; localStorage.setItem('bistro_token', r.token);
-  localStorage.setItem('bistro_ultimo', JSON.stringify({ correo: r.usuario.correo, usuario: r.usuario.usuario, metodo: r.usuario.metodo }));
+  localStorage.setItem('bistro_ultimo', JSON.stringify({ correo: r.usuario.correo, metodo: r.usuario.tiene_password ? r.usuario.metodo : 'pin' }));
   toast(`¡Hola, ${r.usuario.nombre}! 👋`, 'ok'); boot();
 }
 async function logout() {
@@ -602,7 +606,7 @@ window.addEventListener('hashchange', () => { if (S.user) route(); });
 const L = { modo: 'ingresar', metodo: 'pin', paso: 'correo', correo: '' };
 function renderLogin() {
   const ult = JSON.parse(localStorage.getItem('bistro_ultimo') || 'null');
-  if (ult && !L._init) { L.metodo = ult.metodo || 'pin'; L.correo = ult.correo || ''; L.usuario = ult.usuario || ''; }
+  if (ult && !L._init) { L.metodo = ult.metodo || 'pin'; L.correo = ult.correo || ''; }
   L._init = true;
   // emojis solo en los bordes para no tapar el logo
   const pos = [[6, 12], [86, 10], [4, 70], [90, 62], [16, 88], [78, 86], [50, 6], [46, 92]];
@@ -634,8 +638,8 @@ function drawAuthCard() {
       <button class="btn acc block" id="lgVerBtn">Ingresar</button>
       <div class="row sp mt small"><a href="#" id="lgOtro" class="muted">← Cambiar correo</a><a href="#" id="lgReenv" style="color:var(--accent);font-weight:700">Reenviar PIN</a></div>`;
   } else body = `
-      <label class="f">Usuario o correo</label>
-      <input class="inp" id="lgUsr" autocomplete="username" autocapitalize="off" value="${esc(L.usuario || '')}">
+      <label class="f">Correo</label>
+      <input class="inp" id="lgUsr" type="email" inputmode="email" autocomplete="username" autocapitalize="off" placeholder="nombre@empresa.com" value="${esc(L.correo || '')}">
       <label class="f">Contraseña</label>
       <div style="position:relative"><input class="inp" id="lgPass" type="password" autocomplete="current-password">
       <button class="icon-btn" style="position:absolute;right:6px;top:6px;background:transparent" id="lgEye" type="button">👁️</button></div>
@@ -645,7 +649,7 @@ function drawAuthCard() {
     <div class="seg"><button class="on">Ingresar</button><button id="toReg">Registrarme ✨</button></div>
     <div class="row mt" style="gap:8px">
       <button class="chip ${L.metodo === 'pin' ? 'on' : ''}" id="mPin">📩 PIN por correo</button>
-      <button class="chip ${L.metodo === 'password' ? 'on' : ''}" id="mPass">🔑 Usuario y contraseña</button>
+      <button class="chip ${L.metodo === 'password' ? 'on' : ''}" id="mPass">🔑 Correo y contraseña</button>
     </div>
     <div class="step-anim">${body}</div>
     ${DEMO ? `<hr class="sep"><p class="tiny muted b" style="margin:0 0 8px">ACCESO RÁPIDO DEMO</p><div class="row wrap" style="gap:6px">
@@ -684,20 +688,20 @@ function drawAuthCard() {
   }
   if (L.metodo === 'password') {
     const go = async () => {
-      const btn = $('#lgPassBtn'); btn.disabled = true; L.usuario = $('#lgUsr').value.trim();
-      try { sesionIniciada(await rpc('bistro_login_pass', { p_usuario: L.usuario, p_password: $('#lgPass').value })); }
+      const btn = $('#lgPassBtn'); btn.disabled = true; L.correo = $('#lgUsr').value.trim().toLowerCase();
+      try { sesionIniciada(await rpc('bistro_login_pass', { p_usuario: L.correo, p_password: $('#lgPass').value })); }
       catch (e) { toast(errMsg(e), 'err', 4500); btn.disabled = false; }
     };
     $('#lgPassBtn').onclick = go; $('#lgPass').onkeydown = e => e.key === 'Enter' && go();
     $('#lgEye').onclick = () => { const p = $('#lgPass'); p.type = p.type === 'password' ? 'text' : 'password'; };
-    $('#lgOlvide').onclick = e => { e.preventDefault(); L.metodo = 'pin'; L.paso = 'correo'; if (L.usuario.includes('@')) L.correo = L.usuario; drawAuthCard(); };
+    $('#lgOlvide').onclick = e => { e.preventDefault(); L.metodo = 'pin'; L.paso = 'correo'; drawAuthCard(); };
   }
 }
 
 /* =====================================================================
    REGISTRO (asistente de 4 pasos)
    ===================================================================== */
-const R = { step: 1, nombre: '', apellidos: '', correo: '', foto: null, metodo: 'pin', usuario: '', password: '', password2: '', acepto: false };
+const R = { step: 1, nombre: '', apellidos: '', correo: '', foto: null, metodo: 'pin', password: '', password2: '', acepto: false };
 function drawRegistro(c) {
   Cam.stop();
   const pasos = `<div class="steps">${[1, 2, 3, 4].map(i => `<i class="${i <= R.step ? 'on' : ''}"></i>`).join('')}</div>`;
@@ -720,13 +724,13 @@ function drawRegistro(c) {
         <ul><li>Escribes tu correo y te llega un código de 6 dígitos.</li><li>Sin contraseñas que recordar.</li>
         <li>Cada ${meses()} te pediremos un PIN nuevo.</li><li>Ideal si <b>recibes el correo en tu celular</b>.</li></ul></div>
       <div class="method ${R.metodo === 'password' ? 'on' : ''}" onclick="R.metodo='password';drawAuthCard()">
-        <div class="mt-h"><span class="e">🔑</span>Usuario y contraseña</div>
+        <div class="mt-h"><span class="e">🔑</span>Correo y contraseña</div>
         <ul><li>Pensado para quien <b>no recibe el correo en el celular</b>.</li><li>Cada ${meses()} la sesión vence y escribes tu contraseña otra vez.</li></ul>
         ${R.metodo === 'password' ? `<div class="risk">⚠️ <b>Ojo:</b> si la olvidas, tendrás que recibir un PIN en tu correo o pedirle a un administrador que la restablezca. Guárdala en un lugar seguro.</div>` : ''}
       </div>
     </div>
     ${R.metodo === 'password' ? `<div class="step-anim">
-      <label class="f">Nombre de usuario</label><input class="inp" id="rgUsr" autocapitalize="off" autocomplete="username" value="${esc(R.usuario || R.correo.split('@')[0])}">
+      <p class="small muted" style="margin:12px 0 0">Ingresarás con tu correo <b>${esc(R.correo)}</b> y esta contraseña.</p>
       <label class="f">Contraseña (mín. 8 caracteres)</label><input class="inp" id="rgP1" type="password" autocomplete="new-password" value="${esc(R.password)}">
       <div class="meter"><i id="rgMeter"></i></div><div class="tiny muted" id="rgMeterTxt"></div>
       <label class="f">Repite la contraseña</label><input class="inp" id="rgP2" type="password" autocomplete="new-password" value="${esc(R.password2)}">
@@ -735,7 +739,7 @@ function drawRegistro(c) {
     <div class="reg-title">¿Todo bien? ✅</div>
     <div class="row mt" style="gap:16px"><img class="av" src="${R.foto}" style="width:92px;height:92px;border:4px solid var(--accent-soft)">
     <div><div class="b" style="font-size:18px">${esc(R.nombre)} ${esc(R.apellidos)}</div><div class="muted small">${esc(R.correo)}</div>
-    <div class="chip mt" style="margin-top:8px">${R.metodo === 'pin' ? '📩 PIN por correo' : '🔑 Usuario: ' + esc(R.usuario)}</div></div></div>
+    <div class="chip mt" style="margin-top:8px">${R.metodo === 'pin' ? '📩 PIN por correo' : '🔑 Correo y contraseña'}</div></div></div>
     <div class="why mt"><span class="e">⏳</span><div>Tu solicitud llegará a los administradores. Cuando la aprueben te avisaremos por correo y podrás hacer tu primer pedido.</div></div>`;
   if (R.step === 5) h = `<div class="success"><div class="big">✓</div><div class="reg-title">¡Solicitud enviada!</div>
     <p class="muted">Gracias, ${esc(R.nombre)}. Un administrador revisará tu solicitud y te llegará un correo a <b>${esc(R.correo)}</b> cuando esté lista.</p>
@@ -764,7 +768,6 @@ function drawRegistro(c) {
     }
     if (R.step === 2 && !R.foto) return toast('Necesitamos tu foto para reconocerte 😊', 'err');
     if (R.step === 3 && R.metodo === 'password') {
-      if (!R.usuario) return toast('Elige un nombre de usuario', 'err');
       if (R.password.length < 8) return toast(ERR.PASSWORD_CORTA, 'err');
       if (R.password !== R.password2) return toast('Las contraseñas no coinciden', 'err');
       if (!R.acepto) return toast('Confirma que entiendes el riesgo de olvidarla', 'err');
@@ -772,8 +775,8 @@ function drawRegistro(c) {
     if (R.step === 4) {
       const b = $('#rgNext'); b.disabled = true; b.textContent = 'Enviando…';
       try {
-        const r = await rpc('bistro_registrar', { p: { nombre: R.nombre, apellidos: R.apellidos, correo: R.correo, foto: R.foto, metodo: R.metodo, usuario: R.usuario, password: R.password } });
-        if (r.estado === 'activo') { toast('Eres el administrador inicial. ¡Ya puedes ingresar!', 'ok', 5000); L.modo = 'ingresar'; L.metodo = R.metodo; L.correo = R.correo; L.usuario = R.usuario; R.step = 1; drawAuthCard(); return; }
+        const r = await rpc('bistro_registrar', { p: { nombre: R.nombre, apellidos: R.apellidos, correo: R.correo, foto: R.foto, metodo: R.metodo, password: R.password } });
+        if (r.estado === 'activo') { toast('Eres el administrador inicial. ¡Ya puedes ingresar!', 'ok', 5000); L.modo = 'ingresar'; L.metodo = R.metodo; L.correo = R.correo; R.step = 1; drawAuthCard(); return; }
         R.step = 5; confetti(); drawAuthCard(); return;
       } catch (e) { toast(errMsg(e), 'err', 5000); b.disabled = false; b.textContent = 'Enviar solicitud 🚀'; return; }
     }
@@ -783,7 +786,7 @@ function drawRegistro(c) {
 function guardarPaso() {
   const v = id => $('#' + id)?.value.trim();
   if (R.step === 1) { R.nombre = v('rgNom') ?? R.nombre; R.apellidos = v('rgApe') ?? R.apellidos; R.correo = (v('rgCor') ?? R.correo).toLowerCase(); }
-  if (R.step === 3 && R.metodo === 'password') { R.usuario = (v('rgUsr') || '').toLowerCase(); R.password = $('#rgP1').value; R.password2 = $('#rgP2').value; R.acepto = $('#rgAcepto').checked; }
+  if (R.step === 3 && R.metodo === 'password') { R.password = $('#rgP1').value; R.password2 = $('#rgP2').value; R.acepto = $('#rgAcepto').checked; }
 }
 
 /* ---------- componente de cámara / foto ---------- */
@@ -1097,8 +1100,8 @@ function viewPerfil(el) {
       <p class="small muted">Tu sesión vence cada ${meses()}${S.expira ? ` · esta sesión vence el <b>${fLarga(ymd(new Date(S.expira)))}</b>` : ''}.</p>
       <div class="col">
         <div class="method ${u.metodo === 'pin' ? 'on' : ''}" onclick="cambiarMetodo('pin')"><div class="mt-h"><span class="e">📩</span>PIN por correo</div><div class="small muted mt">Recibes un código en tu correo cada vez que la sesión vence.</div></div>
-        <div class="method ${u.metodo === 'password' ? 'on' : ''}" onclick="cambiarMetodo('password')"><div class="mt-h"><span class="e">🔑</span>Usuario y contraseña</div>
-          <div class="small muted mt">${u.tiene_password ? `Usuario: <b>${esc(u.usuario || '')}</b>` : 'Aún no tienes contraseña.'}</div></div>
+        <div class="method ${u.metodo === 'password' ? 'on' : ''}" onclick="cambiarMetodo('password')"><div class="mt-h"><span class="e">🔑</span>Correo y contraseña</div>
+          <div class="small muted mt">${u.tiene_password ? 'Entras con tu correo y tu contraseña.' : 'Aún no tienes contraseña.'}</div></div>
       </div>
       <button class="btn ghost block mt" onclick="formPassword()">${u.tiene_password ? 'Cambiar contraseña' : 'Crear contraseña'}</button>
     </div>
@@ -1130,13 +1133,14 @@ function cambiarFoto() {
 async function cambiarMetodo(m) {
   if (m === S.user.metodo) return;
   if (m === 'password' && !S.user.tiene_password) return formPassword();
+  if (m === 'pin' && !await confirmar('¿Cambiar a PIN por correo?', 'Los PIN llegan por el flujo de correos. Tu contraseña se conserva: si el correo falla, igual puedes entrar con “Correo y contraseña”.', 'Cambiar')) return;
   try { S.user = await rpc('bistro_perfil_guardar', { p: { metodo: m } }); toast('Método de acceso actualizado', 'ok'); viewPerfil($('#main')); } catch (e) { toast(errMsg(e), 'err'); }
 }
 function formPassword(forzado = false) {
   const u = S.user;
   const ov = openModal(`<div class="sheet-h"><h2>${forzado ? 'Crea tu nueva contraseña' : u.tiene_password ? 'Cambiar contraseña' : 'Crear contraseña'}</h2>${forzado ? '' : '<button class="icon-btn" onclick="closeModal()">✕</button>'}</div>
     <div class="sheet-b">${forzado ? '<div class="why"><span class="e">🔑</span><div>Un administrador restableció tu contraseña. Crea una nueva para continuar.</div></div>' : ''}
-      <label class="f">Usuario</label><input class="inp" id="fpU" autocapitalize="off" value="${esc(u.usuario || u.correo.split('@')[0])}">
+      <label class="f">Correo (con él ingresas)</label><input class="inp" value="${esc(u.correo)}" disabled autocomplete="username">
       ${u.tiene_password && !u.debe_cambiar ? '<label class="f">Contraseña actual</label><input class="inp" id="fpA" type="password" autocomplete="current-password">' : ''}
       <label class="f">Nueva contraseña (mín. 8)</label><input class="inp" id="fpN" type="password" autocomplete="new-password">
       <label class="f">Repítela</label><input class="inp" id="fpN2" type="password" autocomplete="new-password">
@@ -1144,11 +1148,12 @@ function formPassword(forzado = false) {
     <div class="sheet-f"><button class="btn acc block" id="fpOk">Guardar</button></div>`, { locked: forzado });
   $('#fpOk', ov).onclick = async () => {
     const n = $('#fpN').value; if (n.length < 8) return toast(ERR.PASSWORD_CORTA, 'err'); if (n !== $('#fpN2').value) return toast('No coinciden', 'err');
-    try { S.user = await rpc('bistro_perfil_guardar', { p: { usuario: $('#fpU').value, password_actual: $('#fpA')?.value || '', password_nueva: n } }); ov._onClose = null; closeModal(ov); toast('Contraseña guardada 🔐', 'ok'); if (S.view === 'perfil') viewPerfil($('#main')); }
+    try { S.user = await rpc('bistro_perfil_guardar', { p: { password_actual: $('#fpA')?.value || '', password_nueva: n } }); ov._onClose = null; closeModal(ov); toast('Contraseña guardada 🔐', 'ok'); if (S.view === 'perfil') viewPerfil($('#main')); if (forzado) revisarObligatorios(); }
     catch (e) { toast(errMsg(e), 'err'); }
   };
 }
 function forzarCambioPassword() { formPassword(true); }
+function revisarObligatorios() { if (S.user.debe_cambiar) forzarCambioPassword(); }
 </script>
 <script>
 /* =====================================================================
@@ -1546,7 +1551,7 @@ function drawSolicitudes() {
   $('#adBody').innerHTML = p.length ? p.map(u => `<div class="req">
       ${fotoImg(u.id, u.nombre, u.apellidos, 'av', 110)}
       <div class="grow" style="min-width:200px"><div class="b" style="font-size:19px">${esc(u.nombre)} ${esc(u.apellidos)}</div><div class="muted small">${esc(u.correo)}</div>
-        <div class="small mt">${u.metodo === 'pin' ? '📩 Ingresará con PIN' : `🔑 Usuario: <b>${esc(u.usuario || '')}</b>`} · solicitó ${fCorta(ymd(new Date(u.creado)))}</div>
+        <div class="small mt">${u.metodo === 'pin' ? '📩 Ingresará con PIN' : '🔑 Ingresará con correo y contraseña'} · solicitó ${fCorta(ymd(new Date(u.creado)))}</div>
         <div class="row wrap mt" style="gap:6px"><span class="tiny muted b">Roles adicionales:</span>${ROLES.map(([r, l]) => `<label class="chip"><input type="checkbox" class="rq-${u.id}" value="${r}" style="accent-color:var(--accent)"> ${l}</label>`).join('')}</div></div>
       <div class="col" style="min-width:150px"><button class="btn ok" onclick="aprobar('${u.id}',true)">✓ Aprobar</button><button class="btn ghost" onclick="aprobar('${u.id}',false)">✕ Rechazar</button></div></div>`).join('')
     : '<div class="empty"><div class="e">📭</div>No hay solicitudes pendientes.</div>';
@@ -1565,7 +1570,7 @@ function drawUsuarios() {
       <button class="btn ghost" style="color:var(--danger)" onclick="cerrarTodas()">🚪 Cerrar todas las sesiones</button></div>
     ${list.map(u => `<div class="ucard">${fotoImg(u.id, u.nombre, u.apellidos, 'av', 52)}
       <div class="grow"><div class="b">${esc(u.nombre)} ${esc(u.apellidos)} <span class="badge st-${u.estado}">${u.estado}</span></div>
-        <div class="tiny muted">${esc(u.correo)} · ${u.metodo === 'pin' ? '📩 PIN' : '🔑 ' + esc(u.usuario || '')} · ${u.sesiones} sesión(es) activa(s)</div>
+        <div class="tiny muted">${esc(u.correo)} · ${u.metodo === 'pin' ? '📩 PIN' : '🔑 contraseña'} · ${u.sesiones} sesión(es) activa(s)</div>
         <div class="row wrap" style="gap:4px;margin-top:4px">${u.roles.map(r => `<span class="chip" style="padding:2px 8px;font-size:11px">${r}</span>`).join('')}</div></div>
       <button class="btn ghost sm" onclick="formUsuario('${u.id}')">Gestionar</button></div>`).join('') || '<div class="empty">Sin resultados</div>'}`;
   $('#adQ').oninput = e => { AD.q = e.target.value; const pos = e.target.selectionStart; drawUsuarios(); const i = $('#adQ'); i.focus(); i.setSelectionRange(pos, pos); };
@@ -1582,8 +1587,8 @@ function formUsuario(id) {
           <label class="btn ghost sm" style="cursor:pointer">🖼️ Subir archivo<input type="file" accept="image/*" id="fuFile" class="hide"></label></div>
           <span class="tiny muted">Opcional. El usuario también puede ponerla desde su perfil.</span></div></div>
       <div class="grid2"><div><label class="f">Nombre</label><input class="inp" id="fuN" value="${esc(u.nombre)}"></div><div><label class="f">Apellidos</label><input class="inp" id="fuA" value="${esc(u.apellidos)}"></div></div>
-      <div class="grid2"><div><label class="f">Correo</label><input class="inp" id="fuC" type="email" value="${esc(u.correo)}"></div><div><label class="f">Usuario (si usa contraseña)</label><input class="inp" id="fuU" value="${esc(u.usuario || '')}"></div></div>
-      <div class="grid2"><div><label class="f">Método de ingreso</label><select class="inp" id="fuM"><option value="pin" ${u.metodo === 'pin' ? 'selected' : ''}>📩 PIN por correo</option><option value="password" ${u.metodo === 'password' ? 'selected' : ''}>🔑 Usuario y contraseña</option></select></div>
+      <label class="f">Correo (con él ingresa)</label><input class="inp" id="fuC" type="email" value="${esc(u.correo)}">
+      <div class="grid2"><div><label class="f">Método de ingreso</label><select class="inp" id="fuM"><option value="pin" ${u.metodo === 'pin' ? 'selected' : ''}>📩 PIN por correo</option><option value="password" ${u.metodo === 'password' ? 'selected' : ''}>🔑 Correo y contraseña</option></select></div>
         <div><label class="f">Estado</label><select class="inp" id="fuE">${['activo', 'inactivo'].map(e => `<option ${u.estado === e ? 'selected' : ''}>${e}</option>`).join('')}</select></div></div>
       <label class="f">Roles (todos pueden pedir)</label><div class="row wrap" style="gap:6px">${ROLES.map(([r, l]) => `<label class="chip"><input type="checkbox" class="fuR" value="${r}" ${u.roles.includes(r) ? 'checked' : ''} style="accent-color:var(--accent)"> ${l}</label>`).join('')}</div>
       ${!id ? '<p class="tiny muted mt">Si elige contraseña, se le enviará una temporal por correo y deberá cambiarla al ingresar.</p>' : `
@@ -1598,7 +1603,7 @@ function formUsuario(id) {
   $('#fuCam', ov).onclick = () => elegirFoto('Foto del usuario', f => setFoto(f));
   $('#fuFile', ov).onchange = async e => { const f = e.target.files[0]; if (f) setFoto(await comprimir(await fileToDataURL(f))); };
   $('#fuOk', ov).onclick = async () => {
-    const p = { id: id || null, nombre: $('#fuN', ov).value, apellidos: $('#fuA', ov).value, correo: $('#fuC', ov).value, usuario: $('#fuU', ov).value, metodo: $('#fuM', ov).value, estado: $('#fuE', ov).value, roles: $$('.fuR', ov).filter(c => c.checked).map(c => c.value), foto: AD.fotoNueva || '' };
+    const p = { id: id || null, nombre: $('#fuN', ov).value, apellidos: $('#fuA', ov).value, correo: $('#fuC', ov).value, metodo: $('#fuM', ov).value, estado: $('#fuE', ov).value, roles: $$('.fuR', ov).filter(c => c.checked).map(c => c.value), foto: AD.fotoNueva || '' };
     if (!p.nombre || !p.apellidos || !/^\S+@\S+\.\S+$/.test(p.correo)) return toast('Revisa nombre, apellidos y correo', 'err');
     try { const r = await rpc('bistro_usuario_guardar', { p }); if (AD.fotoNueva) S.fotos[r.id] = { v: r.foto_v, src: AD.fotoNueva }; closeModal(ov); if (r.id === S.user.id) { S.user = { ...S.user, ...r }; renderShell(); S.view = 'admin'; } toast(id ? 'Usuario actualizado' : 'Usuario creado; se le envió un correo ✉️', 'ok'); viewAdmin($('#main')); } catch (e) { toast(errMsg(e), 'err'); }
   };
@@ -1608,7 +1613,7 @@ async function cerrarTodas() {
   try { const r = await rpc('bistro_cerrar_todas_sesiones'); toast(`Se cerraron ${r.cerradas} sesión(es) 🚪`, 'ok'); viewAdmin($('#main')); } catch (e) { toast(errMsg(e), 'err'); }
 }
 async function resetU(id, accion) {
-  const txt = { password: 'Se generará una contraseña temporal y se enviará por correo. Deberá cambiarla al ingresar.', pin: 'Se borrará su contraseña y entrará con PIN por correo.', sesiones: 'Se cerrarán todas sus sesiones abiertas.', desbloquear: 'Se reinician los intentos fallidos.' }[accion];
+  const txt = { password: 'Se generará una contraseña temporal y se enviará por correo. Deberá cambiarla al ingresar.', pin: 'Se borrará su contraseña y entrará con PIN por correo.', sesiones: 'Se cerrarán todas sus sesiones abiertas.', desbloquear: 'Se reinician los intentos fallidos.', pin_seguridad: 'Se borrará su PIN de seguridad; deberá crear uno nuevo al ingresar.' }[accion];
   if (!await confirmar('¿Confirmar?', txt)) return;
   try { await rpc('bistro_usuario_reset', { p_id: id, p_accion: accion }); toast('Listo ✅', 'ok'); closeModal(); viewAdmin($('#main')); } catch (e) { toast(errMsg(e), 'err'); }
 }
@@ -1689,7 +1694,7 @@ function csvReporte(tipo) {
    las funciones de Supabase (bistro_supabase.sql).
    ===================================================================== */
 const Demo = (() => {
-  const KEY = 'bistro_demo_v3';
+  const KEY = 'bistro_demo_v5';
   let db;
   const uid = () => (crypto.randomUUID ? crypto.randomUUID() : 'id' + Math.random().toString(36).slice(2) + Date.now().toString(36));
   const now = () => new Date().toISOString();
@@ -1719,7 +1724,7 @@ const Demo = (() => {
       ['Sofía', 'Castro', 'sofia.castro@empresa.com', null, [], 'pin', 160],
       ['Andrés', 'Quesada', 'andres.quesada@empresa.com', null, [], 'pin', 260, 'pendiente'],
       ['Valeria', 'Mora', 'valeria.mora@empresa.com', 'vmora', [], 'password', 100, 'pendiente']
-    ].map(([n, a, c, u, r, m, h, e]) => ({ id: uid(), nombre: n, apellidos: a, correo: c, usuario: u, password: u ? 'demo1234' : null, metodo: m, roles: r, estado: e || 'activo', foto: avatarSVG(n, a, h), foto_v: 1, debe_cambiar: false, creado: now() }));
+    ].map(([n, a, c, u, r, m, h, e]) => ({ id: uid(), nombre: n, apellidos: a, correo: c, usuario: u, password: u ? 'demo1234' : null, metodo: m, roles: r, estado: e || 'activo', foto: avatarSVG(n, a, h), foto_v: 1, debe_cambiar: false, ps: r.includes('admin') ? '24681357' : null, creado: now() }));
     db = { seed: hoy(), cfg: { app_nombre: 'ASETICINO', subtitulo: 'Bistró Legrand', logo: null, color: '#2D4A6B', moneda: '₡', zona: 'America/Costa_Rica', sesion_dias: 60, pin_minutos: 10, dias_servicio: [1, 2, 3, 4, 5], semanas_adelante: 1, notificar_listo: false, webhook_url: '', app_url: '' },
       usuarios: users, sesiones: {}, pins: {},
       tiempos: [{ id: T.d, nombre: 'Desayuno', emoji: '☀️', hora_corte: '07:30:00', dias_antes: 0, orden: 1, activo: true }, { id: T.a, nombre: 'Almuerzo', emoji: '🍛', hora_corte: '10:30:00', dias_antes: 0, orden: 2, activo: true }],
@@ -1759,7 +1764,7 @@ const Demo = (() => {
 
   const auth = t => { const s = db.sesiones[t]; const u = s && new Date(s.expira) > new Date() && db.usuarios.find(x => x.id === s.uid); if (!u || u.estado !== 'activo') err('SESION_INVALIDA'); return u; };
   const req = (u, roles) => { if (!(u.roles.includes('admin') || roles.some(r => u.roles.includes(r)))) err('SIN_PERMISO'); };
-  const uj = u => ({ id: u.id, nombre: u.nombre, apellidos: u.apellidos, correo: u.correo, usuario: u.usuario, metodo: u.metodo, roles: u.roles, estado: u.estado, foto_v: u.foto_v, tiene_password: !!u.password, debe_cambiar: !!u.debe_cambiar, creado: u.creado });
+  const uj = u => ({ id: u.id, nombre: u.nombre, apellidos: u.apellidos, correo: u.correo, usuario: u.usuario, metodo: u.metodo, roles: u.roles, estado: u.estado, foto_v: u.foto_v, tiene_password: !!u.password, tiene_pin_seguridad: !!u.ps, debe_cambiar: !!u.debe_cambiar, creado: u.creado });
   const cfgPub = () => { const { webhook_url, app_url, ...c } = db.cfg; return c; };
   const estadoErr = u => { if (!u) err('NO_REGISTRADO'); if (u.estado === 'pendiente') err('PENDIENTE'); if (u.estado === 'rechazado') err('RECHAZADO'); if (u.estado === 'inactivo') err('INACTIVO'); };
   const sesion = u => { const t = uid() + uid(); const exp = new Date(Date.now() + db.cfg.sesion_dias * 864e5).toISOString(); db.sesiones[t] = { uid: u.id, expira: exp }; save(); return { token: t, expira: exp, usuario: uj(u) }; };
@@ -1778,9 +1783,9 @@ const Demo = (() => {
       const c = String(p.correo || '').trim().toLowerCase();
       if (!p.nombre || !p.apellidos) err('DATOS_INCOMPLETOS'); if (!/^\S+@\S+\.\S+$/.test(c)) err('CORREO_INVALIDO'); if (!p.foto) err('FOTO_REQUERIDA');
       const ex = byEmail(c); if (ex && ex.estado !== 'rechazado') err('CORREO_EXISTE');
-      if (p.metodo === 'password') { if (!p.usuario) err('USUARIO_REQUERIDO'); if ((p.password || '').length < 8) err('PASSWORD_CORTA'); if (db.usuarios.some(u => u.usuario === p.usuario && u.correo !== c)) err('USUARIO_EXISTE'); }
+      if (p.metodo === 'password' && (p.password || '').length < 8) err('PASSWORD_CORTA');
       if (ex) db.usuarios = db.usuarios.filter(u => u !== ex);
-      db.usuarios.push({ id: uid(), nombre: p.nombre.trim(), apellidos: p.apellidos.trim(), correo: c, usuario: p.metodo === 'password' ? p.usuario : null, password: p.metodo === 'password' ? p.password : null, metodo: p.metodo, roles: [], estado: 'pendiente', foto: p.foto, foto_v: 1, creado: now() });
+      db.usuarios.push({ id: uid(), nombre: p.nombre.trim(), apellidos: p.apellidos.trim(), correo: c, usuario: null, password: p.metodo === 'password' ? p.password : null, metodo: p.metodo, roles: [], estado: 'pendiente', foto: p.foto, foto_v: 1, creado: now() });
       save(); mail(admins(), `Nueva solicitud de registro · ${p.nombre} ${p.apellidos}`); return { ok: true, estado: 'pendiente' };
     },
     bistro_pin_solicitar({ p_correo }) {
@@ -1806,8 +1811,7 @@ const Demo = (() => {
       if (p.foto) { u.foto = p.foto; u.foto_v++; }
       if (p.password_nueva) {
         if (p.password_nueva.length < 8) err('PASSWORD_CORTA'); if (u.password && !u.debe_cambiar && u.password !== p.password_actual) err('PASSWORD_ACTUAL');
-        const nu = (p.usuario || u.usuario || u.correo.split('@')[0]).toLowerCase(); if (db.usuarios.some(x => x.usuario === nu && x !== u)) err('USUARIO_EXISTE');
-        u.password = p.password_nueva; u.usuario = nu; u.debe_cambiar = false; u.metodo = 'password';
+        u.password = p.password_nueva; u.debe_cambiar = false; u.metodo = 'password';
       }
       if (p.metodo === 'pin') u.metodo = 'pin'; if (p.metodo === 'password') { if (!u.password) err('PASSWORD_REQUERIDA'); u.metodo = 'password'; }
       save(); return uj(u);
@@ -1878,19 +1882,19 @@ const Demo = (() => {
       if (db.usuarios.some(u => u.correo === c && u.id !== p.id)) err('CORREO_EXISTE');
       if (!p.id) {
         const tmp = p.metodo === 'password' ? Math.random().toString(36).slice(2, 10) : null;
-        const u = { id: uid(), nombre: p.nombre.trim(), apellidos: p.apellidos.trim(), correo: c, usuario: tmp ? (p.usuario || c.split('@')[0]).toLowerCase() : null, password: tmp, debe_cambiar: !!tmp, metodo: p.metodo, roles: p.roles, estado: 'activo', foto: p.foto || null, foto_v: 1, creado: now() };
+        const u = { id: uid(), nombre: p.nombre.trim(), apellidos: p.apellidos.trim(), correo: c, usuario: null, password: tmp, debe_cambiar: !!tmp, metodo: p.metodo, roles: p.roles, estado: 'activo', foto: p.foto || null, foto_v: 1, creado: now() };
         db.usuarios.push(u); save(); mail(c, `Tu acceso a ${db.cfg.app_nombre}`, tmp ? `contraseña temporal: ${tmp}` : ''); return uj(u);
       }
       const u = db.usuarios.find(x => x.id === p.id); if (u.id === me.id && !p.roles.includes('admin')) err('NO_QUITAR_ADMIN_PROPIO');
       if (p.foto) { u.foto = p.foto; u.foto_v++; }
-      Object.assign(u, { nombre: p.nombre.trim(), apellidos: p.apellidos.trim(), correo: c, usuario: p.usuario || u.usuario, roles: p.roles, estado: p.estado, metodo: p.metodo === 'password' && !u.password ? u.metodo : p.metodo });
+      Object.assign(u, { nombre: p.nombre.trim(), apellidos: p.apellidos.trim(), correo: c, roles: p.roles, estado: p.estado, metodo: p.metodo === 'password' && !u.password ? u.metodo : p.metodo });
       if (u.estado !== 'activo') Object.keys(db.sesiones).forEach(k => db.sesiones[k].uid === u.id && delete db.sesiones[k]);
       save(); return uj(u);
     },
     bistro_usuario_reset({ p_token, p_id, p_accion }) {
-      req(auth(p_token), []); const u = db.usuarios.find(x => x.id === p_id); const kill = () => Object.keys(db.sesiones).forEach(k => db.sesiones[k].uid === u.id && delete db.sesiones[k]);
-      if (p_accion === 'password') { const tmp = Math.random().toString(36).slice(2, 10); u.password = tmp; u.debe_cambiar = true; u.metodo = 'password'; u.usuario = u.usuario || u.correo.split('@')[0]; kill(); mail(u.correo, 'Restablecimiento de contraseña', `temporal: ${tmp}`); }
-      if (p_accion === 'sesiones') kill(); if (p_accion === 'pin') { u.metodo = 'pin'; u.password = null; u.debe_cambiar = false; kill(); }
+      const me = auth(p_token); req(me, []); if (p_id === me.id && ['pin', 'sesiones', 'pin_seguridad'].includes(p_accion)) err('ACCION_PROPIA'); const u = db.usuarios.find(x => x.id === p_id); const kill = () => Object.keys(db.sesiones).forEach(k => db.sesiones[k].uid === u.id && delete db.sesiones[k]);
+      if (p_accion === 'password') { const tmp = Math.random().toString(36).slice(2, 10); u.password = tmp; u.debe_cambiar = true; u.metodo = 'password'; kill(); mail(u.correo, 'Restablecimiento de contraseña', `temporal: ${tmp}`); }
+      if (p_accion === 'pin_seguridad') u.ps = null; if (p_accion === 'sesiones') kill(); if (p_accion === 'pin') { u.metodo = 'pin'; u.password = null; u.debe_cambiar = false; kill(); }
       save(); return uj(u);
     },
     bistro_usuario_eliminar({ p_token, p_id }) {
