@@ -381,7 +381,7 @@ body.kds .skel{background:#20242A}
    UTILIDADES
    ===================================================================== */
 const DEMO = !CONFIG.SUPABASE_URL;
-const APP_VERSION = 'v1.5 · 16-nov';
+const APP_VERSION = 'v1.6 · 16-nov';
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -672,7 +672,7 @@ function drawAuthCard() {
       try { await rpc('bistro_pin_solicitar', { p_correo: L.correo }); L.paso = 'pin'; drawAuthCard(); toast('Revisa tu correo 📬', 'ok'); }
       catch (e) { toast(errMsg(e), 'err', 4500); btn.disabled = false; btn.textContent = '📩 Enviarme un PIN'; }
     };
-    $('#lgPinBtn').onclick = go; $('#lgCorreo').onkeydown = e => e.key === 'Enter' && go();
+    $('#lgPinBtn').onclick = go; $('#lgCorreo').onkeydown = e => { if (e.key === 'Enter') go(); };
   }
   if (L.metodo === 'pin' && L.paso === 'pin') {
     const boxes = $$('#pinBoxes input'); boxes[0].focus();
@@ -697,7 +697,7 @@ function drawAuthCard() {
       try { sesionIniciada(await rpc('bistro_login_pass', { p_usuario: L.correo, p_password: $('#lgPass').value })); }
       catch (e) { toast(errMsg(e), 'err', 4500); btn.disabled = false; }
     };
-    $('#lgPassBtn').onclick = go; $('#lgPass').onkeydown = e => e.key === 'Enter' && go();
+    $('#lgPassBtn').onclick = go; $('#lgPass').onkeydown = e => { if (e.key === 'Enter') go(); };
     $('#lgEye').onclick = () => { const p = $('#lgPass'); p.type = p.type === 'password' ? 'text' : 'password'; };
     $('#lgOlvide').onclick = e => { e.preventDefault(); L.metodo = 'pin'; L.paso = 'correo'; drawAuthCard(); };
   }
