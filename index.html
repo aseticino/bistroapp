@@ -3,11 +3,13 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#F7F2EB">
+<meta name="theme-color" content="#F4F2EE">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<title>ASETICINO · Bistró Legrand</title>
+<title>ASETICINO · Bistró</title>
 <script>
 /* =====================================================================
    CONFIGURACIÓN  (lo único que debe editar)
@@ -379,6 +381,7 @@ body.kds .skel{background:#20242A}
    UTILIDADES
    ===================================================================== */
 const DEMO = !CONFIG.SUPABASE_URL;
+const APP_VERSION = 'v1.5 · 16-nov';
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -511,6 +514,7 @@ function errMsg(e) {
   const m = String(e?.message || e || '');
   if (m.startsWith('AGOTADO:')) return `“${m.slice(8)}” se agotó. Elige otra opción.`;
   if (/Failed to fetch|NetworkError/i.test(m)) return 'Sin conexión. Revisa tu internet.';
+  if (/schema cache/i.test(m)) return 'La base de datos aún no tiene las funciones del bistró: corra bistro_supabase.sql en Supabase y luego: notify pgrst, \'reload schema\';';
   return ERR[m] || m || 'Ocurrió un error';
 }
 async function rpc(fn, args = {}) {
@@ -548,7 +552,7 @@ function clearTimers() { S.timers.forEach(t => clearInterval(t)); S.timers = [];
 function aplicarMarca() {
   const c = S.cfg;
   document.documentElement.style.setProperty('--accent', c.color || '#2D4A6B');
-  document.title = `${c.app_nombre || 'ASETICINO'} · ${c.subtitulo || 'Bistró Legrand'}`;
+  document.title = `${c.app_nombre || 'ASETICINO'} · ${c.subtitulo || 'Bistró'}`;
   let link = $('link[rel=icon]'); if (!link) { link = document.createElement('link'); link.rel = 'icon'; document.head.appendChild(link); }
   link.href = c.logo || `data:image/svg+xml;utf8,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🍽️</text></svg>')}`;
 }
@@ -616,7 +620,7 @@ function renderLogin() {
   <div class="auth">
     <section class="hero">${floaties}
       <img class="logo-wide" src="${logoSrc()}" alt="${esc(S.cfg.app_nombre || 'ASETICINO')}">
-      <p>${esc(S.cfg.subtitulo || 'Bistró Legrand')}</p>
+      <p>${esc(S.cfg.subtitulo || 'Bistró')}</p>
     </section>
     <section class="auth-panel"><div class="auth-card" id="authCard"></div></section>
   </div>`;
@@ -655,7 +659,8 @@ function drawAuthCard() {
     ${DEMO ? `<hr class="sep"><p class="tiny muted b" style="margin:0 0 8px">ACCESO RÁPIDO DEMO</p><div class="row wrap" style="gap:6px">
       <button class="chip" onclick="demoLogin('admin')">⚙️ Admin</button><button class="chip" onclick="demoLogin('cocina')">👩‍🍳 Cocina</button>
       <button class="chip" onclick="demoLogin('servicio')">🛎️ Servicio</button><button class="chip" onclick="demoLogin('usuario')">🙂 Colaborador</button>
-      <button class="chip" onclick="Demo._reset()">↺ Reiniciar demo</button></div>` : ''}`;
+      <button class="chip" onclick="Demo._reset()">↺ Reiniciar demo</button></div>` : ''}
+    <p class="tiny muted center" style="margin:14px 0 0;opacity:.6">${APP_VERSION}</p>`;
   $('#toReg').onclick = () => { L.modo = 'registro'; drawAuthCard(); };
   $('#mPin').onclick = () => { L.metodo = 'pin'; L.paso = 'correo'; drawAuthCard(); };
   $('#mPass').onclick = () => { L.metodo = 'password'; drawAuthCard(); };
@@ -1725,7 +1730,7 @@ const Demo = (() => {
       ['Andrés', 'Quesada', 'andres.quesada@empresa.com', null, [], 'pin', 260, 'pendiente'],
       ['Valeria', 'Mora', 'valeria.mora@empresa.com', 'vmora', [], 'password', 100, 'pendiente']
     ].map(([n, a, c, u, r, m, h, e]) => ({ id: uid(), nombre: n, apellidos: a, correo: c, usuario: u, password: u ? 'demo1234' : null, metodo: m, roles: r, estado: e || 'activo', foto: avatarSVG(n, a, h), foto_v: 1, debe_cambiar: false, ps: r.includes('admin') ? '24681357' : null, creado: now() }));
-    db = { seed: hoy(), cfg: { app_nombre: 'ASETICINO', subtitulo: 'Bistró Legrand', logo: null, color: '#2D4A6B', moneda: '₡', zona: 'America/Costa_Rica', sesion_dias: 60, pin_minutos: 10, dias_servicio: [1, 2, 3, 4, 5], semanas_adelante: 1, notificar_listo: false, webhook_url: '', app_url: '' },
+    db = { seed: hoy(), cfg: { app_nombre: 'ASETICINO', subtitulo: 'Bistró', logo: null, color: '#2D4A6B', moneda: '₡', zona: 'America/Costa_Rica', sesion_dias: 60, pin_minutos: 10, dias_servicio: [1, 2, 3, 4, 5], semanas_adelante: 1, notificar_listo: false, webhook_url: '', app_url: '' },
       usuarios: users, sesiones: {}, pins: {},
       tiempos: [{ id: T.d, nombre: 'Desayuno', emoji: '☀️', hora_corte: '07:30:00', dias_antes: 0, orden: 1, activo: true }, { id: T.a, nombre: 'Almuerzo', emoji: '🍛', hora_corte: '10:30:00', dias_antes: 0, orden: 2, activo: true }],
       categorias: [{ id: C.des, tiempo_id: T.d, nombre: 'Desayuno', emoji: '🍳', orden: 1, activo: true }, { id: C.dia, tiempo_id: T.a, nombre: 'Plato del día', emoji: '🍲', orden: 1, activo: true },
