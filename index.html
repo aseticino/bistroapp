@@ -266,6 +266,12 @@ body.kiosk .shell{display:block} body.kiosk main#main{max-width:none;padding:14p
 .sug{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
 .total-pill{font-size:13px;color:var(--muted)} .total-pill b{display:block;font-size:20px;color:var(--ink)}
 
+/* para llevar */
+.llevar{display:flex;align-items:center;gap:12px;background:#fff;border:1.5px solid var(--line);border-radius:16px;padding:12px 14px;cursor:pointer;transition:.15s}
+.llevar.on{border-color:var(--accent);background:var(--accent-soft)}
+.llevar .e{font-size:28px}
+.tag-llevar{display:inline-flex;align-items:center;gap:4px;background:#2F3439;color:#fff;font-size:11.5px;font-weight:800;padding:3px 9px;border-radius:8px;letter-spacing:.5px}
+.kllevar{background:#E8D9B0;color:#2B2410;border-radius:12px;padding:8px 12px;margin-top:10px;font-weight:800;font-size:17px;letter-spacing:1px;text-align:center}
 /* ---------- historial ---------- */
 .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
 .stat{background:#fff;border:1px solid var(--line);border-radius:18px;padding:14px}
@@ -381,7 +387,7 @@ body.kds .skel{background:#20242A}
    UTILIDADES
    ===================================================================== */
 const DEMO = !CONFIG.SUPABASE_URL;
-const APP_VERSION = 'v1.7 · 16-nov';
+const APP_VERSION = 'v2.0 · 16-nov';
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -505,6 +511,8 @@ const ERR = {
   TIEMPO_INVALIDO: 'Ese tiempo de comida no está disponible.', TRANSICION_INVALIDA: 'Ese cambio de estado no está permitido.',
   SOLO_SERVICIO: 'Solo se puede editar cuando el pedido está listo o en servicio.', TIENE_PEDIDOS: 'Tiene pedidos registrados: mejor desactívelo.',
   NO_QUITAR_ADMIN_PROPIO: 'No puedes quitarte el rol de admin a ti mismo.',
+  DOMINIOS_VACIO: 'Debe haber al menos un dominio permitido.', DOMINIO_INVALIDO: 'Revisa los dominios: ejemplo legrand.com',
+  METODO_PIN: 'Tu cuenta ingresa con PIN por correo.', METODO_PASSWORD: 'Tu cuenta ingresa con correo y contraseña.',
   PS_INVALIDO: 'Correo o PIN de seguridad incorrectos.', PS_BLOQUEADO: 'Demasiados intentos con el PIN de seguridad. Espera 30 minutos.',
   PS_FORMATO: 'El PIN de seguridad debe tener de 6 a 8 números.', PS_ACTUAL: 'El PIN de seguridad actual no es correcto.',
   ACCION_PROPIA: 'Esta acción no se puede aplicar a tu propia cuenta (evita dejarte sin acceso). Usa tu Perfil.',
@@ -514,11 +522,12 @@ function errMsg(e) {
   const m = String(e?.message || e || '');
   if (m.startsWith('AGOTADO:')) return `“${m.slice(8)}” se agotó. Elige otra opción.`;
   if (/Failed to fetch|NetworkError/i.test(m)) return 'Sin conexión. Revisa tu internet.';
+  if (m === 'DOMINIO_NO_PERMITIDO') return `Solo se pueden registrar correos ${dominiosTxt() || 'de la empresa'}.`;
   if (/schema cache/i.test(m)) return 'La base de datos aún no tiene las funciones del bistró: corra bistro_supabase.sql en Supabase y luego: notify pgrst, \'reload schema\';';
   return ERR[m] || m || 'Ocurrió un error';
 }
 async function rpc(fn, args = {}) {
-  if (S.token && !('p_token' in args) && !['bistro_config_publica', 'bistro_registrar', 'bistro_pin_solicitar', 'bistro_pin_verificar', 'bistro_login_pass'].includes(fn)) args = { p_token: S.token, ...args };
+  if (S.token && !('p_token' in args) && !['bistro_config_publica', 'bistro_registrar', 'bistro_pin_solicitar', 'bistro_pin_verificar', 'bistro_login_pass', 'bistro_metodo_ingreso'].includes(fn)) args = { p_token: S.token, ...args };
   let data;
   if (DEMO) {
     await sleep(120);
@@ -595,7 +604,7 @@ async function boot() {
 }
 function sesionIniciada(r) {
   S.token = r.token; S.user = r.usuario; S.expira = r.expira; localStorage.setItem('bistro_token', r.token);
-  localStorage.setItem('bistro_ultimo', JSON.stringify({ correo: r.usuario.correo, metodo: r.usuario.tiene_password ? r.usuario.metodo : 'pin' }));
+  localStorage.setItem('bistro_ultimo', JSON.stringify({ correo: r.usuario.correo }));
   toast(`¡Hola, ${r.usuario.nombre}! 👋`, 'ok'); boot();
 }
 async function logout() {
@@ -607,10 +616,10 @@ window.addEventListener('hashchange', () => { if (S.user) route(); });
 /* =====================================================================
    LOGIN
    ===================================================================== */
-const L = { modo: 'ingresar', metodo: 'pin', paso: 'correo', correo: '' };
+const L = { modo: 'ingresar', paso: 'correo', correo: '' };
 function renderLogin() {
   const ult = JSON.parse(localStorage.getItem('bistro_ultimo') || 'null');
-  if (ult && !L._init) { L.metodo = ult.metodo || 'pin'; L.correo = ult.correo || ''; }
+  if (ult && !L._init) { L.correo = ult.correo || ''; }
   L._init = true;
   // emojis solo en los bordes para no tapar el logo
   const pos = [[6, 12], [86, 10], [4, 70], [90, 62], [16, 88], [78, 86], [50, 6], [46, 92]];
@@ -626,35 +635,35 @@ function renderLogin() {
   </div>`;
   drawAuthCard();
 }
+function dominiosTxt() { return (S.cfg.dominios_permitidos || []).map(d => '@' + d).join(' o '); }
+function correoPermitido(c) { const ds = S.cfg.dominios_permitidos || []; const dom = String(c || '').toLowerCase().split('@')[1] || ''; return !ds.length || ds.includes(dom); }
+// Ingreso en 2 pasos: 1) correo  2) solo el método con el que la persona se registró
 function drawAuthCard() {
   const c = $('#authCard'); if (!c) return;
   if (L.modo === 'registro') return drawRegistro(c);
   let body = '';
-  if (L.metodo === 'pin') {
-    if (L.paso === 'correo') body = `
+  if (L.paso === 'correo') body = `
       <label class="f">Tu correo</label>
-      <input class="inp" id="lgCorreo" type="email" inputmode="email" autocomplete="email" placeholder="nombre@empresa.com" value="${esc(L.correo)}">
-      <button class="btn acc block mt" id="lgPinBtn">📩 Enviarme un PIN</button>
-      <p class="tiny muted center mt">Te llegará un código de 6 dígitos. Tu sesión dura ${meses()}.</p>`;
-    else body = `
-      <p class="center" style="margin:6px 0 0">Escribe el PIN que enviamos a<br><b>${esc(L.correo)}</b></p>
+      <input class="inp" id="lgCorreo" type="email" inputmode="email" autocomplete="username" autocapitalize="off" placeholder="nombre${S.cfg.dominios_permitidos?.[0] ? '@' + esc(S.cfg.dominios_permitidos[0]) : '@empresa.com'}" value="${esc(L.correo)}">
+      <button class="btn acc block mt" id="lgNext">Continuar →</button>
+      <p class="tiny muted center mt">Te pediremos el método con el que te registraste. Tu sesión dura ${meses()}.</p>`;
+  else if (L.paso === 'pin') body = `
+      <div class="chip mt" style="max-width:100%;overflow:hidden">📩 ${esc(L.correo)}</div>
+      <p class="center" style="margin:12px 0 0">Escribe el PIN de 6 dígitos que enviamos a tu correo</p>
       <div class="pin-boxes" id="pinBoxes">${[0, 1, 2, 3, 4, 5].map(i => `<input inputmode="numeric" maxlength="1" ${i === 0 ? 'autocomplete="one-time-code"' : ''} data-i="${i}">`).join('')}</div>
       <button class="btn acc block" id="lgVerBtn">Ingresar</button>
       <div class="row sp mt small"><a href="#" id="lgOtro" class="muted">← Cambiar correo</a><a href="#" id="lgReenv" style="color:var(--accent);font-weight:700">Reenviar PIN</a></div>`;
-  } else body = `
-      <label class="f">Correo</label>
-      <input class="inp" id="lgUsr" type="email" inputmode="email" autocomplete="username" autocapitalize="off" placeholder="nombre@empresa.com" value="${esc(L.correo || '')}">
+  else body = `
+      <div class="chip mt" style="max-width:100%;overflow:hidden">🔑 ${esc(L.correo)}</div>
+      <input type="email" autocomplete="username" value="${esc(L.correo)}" class="hide" aria-hidden="true">
       <label class="f">Contraseña</label>
       <div style="position:relative"><input class="inp" id="lgPass" type="password" autocomplete="current-password">
       <button class="icon-btn" style="position:absolute;right:6px;top:6px;background:transparent" id="lgEye" type="button">👁️</button></div>
       <button class="btn acc block mt" id="lgPassBtn">🔑 Ingresar</button>
-      <p class="small center mt"><a href="#" id="lgOlvide" style="color:var(--accent);font-weight:700">¿Olvidaste tu contraseña? Entra con un PIN al correo</a></p>`;
+      <div class="row sp mt small"><a href="#" id="lgOtro" class="muted">← Cambiar correo</a></div>
+      <p class="tiny muted center mt">¿Olvidaste tu contraseña? Pide a un administrador que la restablezca; te llegará una temporal al correo.</p>`;
   c.innerHTML = `
     <div class="seg"><button class="on">Ingresar</button><button id="toReg">Registrarme ✨</button></div>
-    <div class="row mt" style="gap:8px">
-      <button class="chip ${L.metodo === 'pin' ? 'on' : ''}" id="mPin">📩 PIN por correo</button>
-      <button class="chip ${L.metodo === 'password' ? 'on' : ''}" id="mPass">🔑 Correo y contraseña</button>
-    </div>
     <div class="step-anim">${body}</div>
     ${DEMO ? `<hr class="sep"><p class="tiny muted b" style="margin:0 0 8px">ACCESO RÁPIDO DEMO</p><div class="row wrap" style="gap:6px">
       <button class="chip" onclick="demoLogin('admin')">⚙️ Admin</button><button class="chip" onclick="demoLogin('cocina')">👩‍🍳 Cocina</button>
@@ -662,19 +671,22 @@ function drawAuthCard() {
       <button class="chip" onclick="Demo._reset()">↺ Reiniciar demo</button></div>` : ''}
     <p class="tiny muted center" style="margin:14px 0 0;opacity:.6">${APP_VERSION}</p>`;
   $('#toReg').onclick = () => { L.modo = 'registro'; drawAuthCard(); };
-  $('#mPin').onclick = () => { L.metodo = 'pin'; L.paso = 'correo'; drawAuthCard(); };
-  $('#mPass').onclick = () => { L.metodo = 'password'; drawAuthCard(); };
-  if (L.metodo === 'pin' && L.paso === 'correo') {
+  if ($('#lgOtro')) $('#lgOtro').onclick = e => { e.preventDefault(); L.paso = 'correo'; drawAuthCard(); };
+  if (L.paso === 'correo') {
+    const inp = $('#lgCorreo'); if (!L.correo) inp.focus();
     const go = async () => {
-      const btn = $('#lgPinBtn'); L.correo = $('#lgCorreo').value.trim();
+      const btn = $('#lgNext'); L.correo = inp.value.trim().toLowerCase();
       if (!/^\S+@\S+\.\S+$/.test(L.correo)) return toast('Escribe un correo válido', 'err');
-      btn.disabled = true; btn.textContent = 'Enviando…';
-      try { await rpc('bistro_pin_solicitar', { p_correo: L.correo }); L.paso = 'pin'; drawAuthCard(); toast('Revisa tu correo 📬', 'ok'); }
-      catch (e) { toast(errMsg(e), 'err', 4500); btn.disabled = false; btn.textContent = '📩 Enviarme un PIN'; }
+      btn.disabled = true; btn.textContent = 'Revisando…';
+      try {
+        const r = await rpc('bistro_metodo_ingreso', { p_correo: L.correo });
+        if (r.metodo === 'password') { L.paso = 'password'; drawAuthCard(); $('#lgPass').focus(); return; }
+        await rpc('bistro_pin_solicitar', { p_correo: L.correo }); L.paso = 'pin'; drawAuthCard(); toast('Te enviamos un PIN. Revisa tu correo 📬', 'ok');
+      } catch (e) { toast(errMsg(e), 'err', 5000); btn.disabled = false; btn.textContent = 'Continuar →'; }
     };
-    $('#lgPinBtn').onclick = go; $('#lgCorreo').onkeydown = e => { if (e.key === 'Enter') go(); };
+    $('#lgNext').onclick = go; inp.onkeydown = e => { if (e.key === 'Enter') go(); };
   }
-  if (L.metodo === 'pin' && L.paso === 'pin') {
+  if (L.paso === 'pin') {
     const boxes = $$('#pinBoxes input'); boxes[0].focus();
     const val = () => boxes.map(b => b.value).join('');
     const ver = async () => {
@@ -688,18 +700,16 @@ function drawAuthCard() {
       b.onpaste = e => { const t = (e.clipboardData.getData('text') || '').replace(/\D/g, '').slice(0, 6); if (t) { e.preventDefault(); t.split('').forEach((ch, j) => boxes[j] && (boxes[j].value = ch)); if (t.length === 6) ver(); } };
     });
     $('#lgVerBtn').onclick = ver;
-    $('#lgOtro').onclick = e => { e.preventDefault(); L.paso = 'correo'; drawAuthCard(); };
     $('#lgReenv').onclick = async e => { e.preventDefault(); try { await rpc('bistro_pin_solicitar', { p_correo: L.correo }); toast('PIN reenviado 📬', 'ok'); } catch (er) { toast(errMsg(er), 'err'); } };
   }
-  if (L.metodo === 'password') {
+  if (L.paso === 'password') {
     const go = async () => {
-      const btn = $('#lgPassBtn'); btn.disabled = true; L.correo = $('#lgUsr').value.trim().toLowerCase();
-      try { sesionIniciada(await rpc('bistro_login_pass', { p_usuario: L.correo, p_password: $('#lgPass').value })); }
+      const btn = $('#lgPassBtn'); btn.disabled = true;
+      try { sesionIniciada(await rpc('bistro_login_pass', { p_usuario: L.correo, p_password: $('#lgPass').value })); L.paso = 'correo'; }
       catch (e) { toast(errMsg(e), 'err', 4500); btn.disabled = false; }
     };
     $('#lgPassBtn').onclick = go; $('#lgPass').onkeydown = e => { if (e.key === 'Enter') go(); };
     $('#lgEye').onclick = () => { const p = $('#lgPass'); p.type = p.type === 'password' ? 'text' : 'password'; };
-    $('#lgOlvide').onclick = e => { e.preventDefault(); L.metodo = 'pin'; L.paso = 'correo'; drawAuthCard(); };
   }
 }
 
@@ -716,7 +726,7 @@ function drawRegistro(c) {
     <div class="grid2"><div><label class="f">Nombre</label><input class="inp" id="rgNom" autocomplete="given-name" value="${esc(R.nombre)}"></div>
     <div><label class="f">Apellidos</label><input class="inp" id="rgApe" autocomplete="family-name" value="${esc(R.apellidos)}"></div></div>
     <label class="f">Correo</label><input class="inp" id="rgCor" type="email" inputmode="email" autocomplete="email" placeholder="nombre@empresa.com" value="${esc(R.correo)}">
-    <p class="tiny muted">Un correo solo puede tener una cuenta.</p>`;
+    <p class="tiny muted">Usa tu correo ${esc(dominiosTxt())}. Un correo solo puede tener una cuenta.</p>`;
   if (R.step === 2) h = `
     <div class="reg-title">Tu mejor foto 📸</div>
     <div class="why"><span class="e">🤝</span><div>Con tu foto, el equipo del bistró <b>te reconoce al llegar</b> y te entrega tu pedido sin tener que preguntar tu nombre. Solo la ven cocina y servicio.</div></div>
@@ -770,6 +780,7 @@ function drawRegistro(c) {
     if (R.step === 1) {
       if (!R.nombre || !R.apellidos) return toast('Completa nombre y apellidos', 'err');
       if (!/^\S+@\S+\.\S+$/.test(R.correo)) return toast('Revisa el correo', 'err');
+      if (!correoPermitido(R.correo)) return toast(`Solo se pueden registrar correos ${dominiosTxt()}`, 'err', 5000);
     }
     if (R.step === 2 && !R.foto) return toast('Necesitamos tu foto para reconocerte 😊', 'err');
     if (R.step === 3 && R.metodo === 'password') {
@@ -781,7 +792,7 @@ function drawRegistro(c) {
       const b = $('#rgNext'); b.disabled = true; b.textContent = 'Enviando…';
       try {
         const r = await rpc('bistro_registrar', { p: { nombre: R.nombre, apellidos: R.apellidos, correo: R.correo, foto: R.foto, metodo: R.metodo, password: R.password } });
-        if (r.estado === 'activo') { toast('Eres el administrador inicial. ¡Ya puedes ingresar!', 'ok', 5000); L.modo = 'ingresar'; L.metodo = R.metodo; L.correo = R.correo; R.step = 1; drawAuthCard(); return; }
+        if (r.estado === 'activo') { toast('Eres el administrador inicial. ¡Ya puedes ingresar!', 'ok', 5000); L.modo = 'ingresar'; L.paso = 'correo'; L.correo = R.correo; R.step = 1; drawAuthCard(); return; }
         R.step = 5; confetti(); drawAuthCard(); return;
       } catch (e) { toast(errMsg(e), 'err', 5000); b.disabled = false; b.textContent = 'Enviar solicitud 🚀'; return; }
     }
@@ -986,7 +997,7 @@ function drawMeals() {
     else if (!abierto) body = `<div class="lockmsg" style="background:var(--soft)">⏰ Ya pasó la hora de corte (${hora12(t.hora_corte)}).</div>`;
     else body = `<div class="peek">${grupos.flatMap(g => g.platos.filter(p => p.tipo === 'principal')).slice(0, 6).map(p => `<span class="chip">${esc(p.nombre)}</span>`).join('')}</div>
         <button class="btn acc block" onclick="abrirEditor('${t.id}')">＋ Armar mi pedido</button>`;
-    return `<div class="meal"><div class="meal-h"><span class="e">${t.emoji || '🍽️'}</span><div class="grow"><h3>${esc(t.nombre)}</h3><div class="tiny muted b">${corteTxt}</div></div>${ped ? badge(ped.estado) : ''}</div>
+    return `<div class="meal"><div class="meal-h"><span class="e">${t.emoji || '🍽️'}</span><div class="grow"><h3>${esc(t.nombre)} ${ped?.para_llevar ? '<span class="tag-llevar">🥡 PARA LLEVAR</span>' : ''}</h3><div class="tiny muted b">${corteTxt}</div></div>${ped ? badge(ped.estado) : ''}</div>
       <div class="meal-b">${body}</div></div>`;
   }).join('');
 }
@@ -1000,7 +1011,7 @@ async function eliminarPedido(tiempoId) {
 let E = null;
 function abrirEditor(tiempoId) {
   const t = S.menu.tiempos.find(x => x.id === tiempoId), ped = S.misPedidos.find(p => p.fecha === S.dia && p.tiempo_id === tiempoId);
-  E = { t, fecha: S.dia, qty: {}, notas: {}, peticion: ped?.peticion || '', repetir: new Set() };
+  E = { t, fecha: S.dia, qty: {}, notas: {}, peticion: ped?.peticion || '', repetir: new Set(), llevar: !!ped?.para_llevar };
   (ped?.items || []).forEach(i => { if (i.plato_id) { E.qty[i.plato_id] = (E.qty[i.plato_id] || 0) + i.cantidad; if (i.nota) E.notas[i.plato_id] = i.nota; } });
   const ov = openModal(`<div class="sheet-h"><span style="font-size:28px">${t.emoji || '🍽️'}</span><div class="grow"><h2>${esc(t.nombre)}</h2><div class="small muted">${cap(fLarga(S.dia))}</div></div>
       <button class="icon-btn" onclick="closeModal()">✕</button></div>
@@ -1010,12 +1021,12 @@ function abrirEditor(tiempoId) {
 }
 function drawEditor() {
   const grupos = platosDelDia(E.fecha, E.t.id), b = $('#edBody'); if (!b) return;
-  const SUG = ['Sin cebolla', 'Salsa aparte', 'Poca sal', 'Para llevar 🥡', 'Sin picante', 'Extra ensalada'];
+  const SUG = ['Sin cebolla', 'Salsa aparte', 'Poca sal', 'Sin picante', 'Extra ensalada'];
   const otrosDias = diasServicio().filter(d => d !== E.fecha && (!corteDe(E.t, d) || new Date() < corteDe(E.t, d)) &&
     !S.misPedidos.some(p => p.fecha === d && p.tiempo_id === E.t.id && p.estado !== 'pendiente') && platosDelDia(d, E.t.id).length);
   b.innerHTML = grupos.map(g => {
     const pr = g.platos.filter(p => p.tipo === 'principal'), sd = g.platos.filter(p => p.tipo !== 'principal');
-    return `<div class="cat-h">${g.cat.emoji || '🍴'} ${esc(g.cat.nombre)}</div>
+    return `<div class="cat-h">${g.cat.emoji || '🍴'} ${esc(g.cat.nombre)}</div>${g.cat.descripcion ? `<div class="tiny muted" style="margin:-4px 0 8px">${esc(g.cat.descripcion)}</div>` : ''}
       ${pr.map(p => { const q = E.qty[p.id] || 0; return `<div class="dish ${q ? 'sel' : ''} ${p.agotado ? 'off' : ''}">
         <div class="grow"><div class="nm">${esc(p.nombre)}${p.agotado ? ' · <span style="color:var(--danger)">Agotado</span>' : ''}</div>${p.descripcion ? `<div class="ds">${esc(p.descripcion)}</div>` : ''}
         ${q ? `<a href="#" class="tiny" style="color:var(--accent);font-weight:700" onclick="event.preventDefault();notaPlato('${p.id}')">${E.notas[p.id] ? '📝 ' + esc(E.notas[p.id]) : '＋ nota para este plato'}</a>` : ''}</div>
@@ -1026,14 +1037,27 @@ function drawEditor() {
           ${q ? `<span class="qq" onclick="event.stopPropagation();cant('${p.id}',-1)">${q > 1 ? q + '×' : '✓'}</span>` : '＋'} ${esc(p.nombre)} <span class="px">${Number(p.precio) ? money(p.precio) : ''}</span></div>`; }).join('')}</div>
         <div class="tiny muted" style="margin-top:6px">Toca para agregar · toca el ✓ para quitar</div>` : ''}`;
   }).join('') + `
+    <div class="cat-h mt2">🥡 ¿Para llevar?</div>
+    <div class="llevar ${E.llevar ? 'on' : ''}" onclick="E.llevar=!E.llevar;const sc=$('#edBody').scrollTop;drawEditor();$('#edBody').scrollTop=sc">
+      <span class="e">🥡</span><div class="grow"><b>Para llevar</b><div class="tiny muted">${empaqueTxt()}</div></div>
+      <span class="switch"><input type="checkbox" ${E.llevar ? 'checked' : ''} tabindex="-1" style="pointer-events:none"><span></span></span></div>
     <div class="cat-h mt2">💬 Peticiones especiales</div>
     <textarea class="inp" id="edPet" maxlength="300" placeholder="Ej.: sin cebolla, la salsa aparte, lo recojo a las 12:30…">${esc(E.peticion)}</textarea>
     <div class="sug">${SUG.map(s => `<button class="chip" onclick="sugerir('${s}')">${s}</button>`).join('')}</div>
     ${otrosDias.length ? `<div class="cat-h mt2">🔁 Repetir este pedido en</div><div class="row wrap" style="gap:6px">${otrosDias.map(d => `<button class="chip ${E.repetir.has(d) ? 'on' : ''}" onclick="E.repetir.has('${d}')?E.repetir.delete('${d}'):E.repetir.add('${d}');drawEditor()">${fCorta(d)}</button>`).join('')}</div>
       <div class="tiny muted mt">Solo se copian los platos que también estén disponibles ese día.</div>` : ''}`;
-  const tot = grupos.flatMap(g => g.platos).reduce((a, p) => a + (E.qty[p.id] || 0) * Number(p.precio), 0);
+  let tot = grupos.flatMap(g => g.platos).reduce((a, p) => a + (E.qty[p.id] || 0) * Number(p.precio), 0);
+  if (E.llevar && S.cfg.empaque_activo !== false) {
+    const nPr = grupos.flatMap(g => g.platos.filter(p => p.tipo === 'principal')).reduce((a, p) => a + (E.qty[p.id] || 0), 0);
+    tot += Number(S.cfg.empaque_precio || 0) * (S.cfg.empaque_modo === 'plato' ? Math.max(1, nPr) : 1);
+  }
   $('#edTotal').textContent = money(tot);
   $('#edPet').oninput = e => E.peticion = e.target.value;
+}
+function empaqueTxt() {
+  const c = S.cfg; if (c.empaque_activo === false) return 'Te lo empacamos para llevar.';
+  const pr = Number(c.empaque_precio || 0);
+  return pr ? `Se agrega ${esc(c.empaque_nombre || 'empaque')}: ${money(pr)} ${c.empaque_modo === 'plato' ? 'por cada plato principal' : 'por pedido'}.` : `Incluye ${esc((c.empaque_nombre || 'empaque').toLowerCase())} sin costo.`;
 }
 function cant(id, d) { E.qty[id] = Math.max(0, (E.qty[id] || 0) + d); if (!E.qty[id]) { delete E.qty[id]; delete E.notas[id]; } const sc = $('#edBody').scrollTop; drawEditor(); $('#edBody').scrollTop = sc; }
 async function notaPlato(id) { const v = await pedirTexto('Nota para este plato', 'Ej.: término medio, sin salsa…', E.notas[id] || ''); if (v !== null) { E.notas[id] = v.trim(); drawEditor(); } }
@@ -1043,13 +1067,13 @@ async function guardarEditor() {
   if (!items.length) return toast('Agrega al menos un plato 🙂', 'err');
   const btn = $('#edSave'); btn.disabled = true; btn.textContent = 'Guardando…';
   try {
-    await rpc('bistro_guardar_pedido', { p: { fecha: E.fecha, tiempo_id: E.t.id, items, peticion: E.peticion } });
+    await rpc('bistro_guardar_pedido', { p: { fecha: E.fecha, tiempo_id: E.t.id, items, peticion: E.peticion, para_llevar: E.llevar } });
     let rep = 0, omit = [];
     for (const d of E.repetir) {
       const disp = new Set(platosDelDia(d, E.t.id).flatMap(g => g.platos.filter(p => !p.agotado).map(p => p.id)));
       const its = items.filter(i => disp.has(i.plato_id));
       if (!its.length) { omit.push(fCorta(d)); continue; }
-      try { await rpc('bistro_guardar_pedido', { p: { fecha: d, tiempo_id: E.t.id, items: its, peticion: E.peticion } }); rep++; } catch (e) { omit.push(fCorta(d)); }
+      try { await rpc('bistro_guardar_pedido', { p: { fecha: d, tiempo_id: E.t.id, items: its, peticion: E.peticion, para_llevar: E.llevar } }); rep++; } catch (e) { omit.push(fCorta(d)); }
     }
     closeModal(); toast(rep ? `¡Listo! Pedido guardado para ${rep + 1} días 🎉` : '¡Pedido guardado! 🎉', 'ok');
     if (omit.length) toast('No se pudo repetir en: ' + omit.join(', '), 'info', 5000);
@@ -1080,7 +1104,7 @@ async function viewHistorial(el) {
       <div class="sec-title"><h3 style="text-transform:capitalize">${MNL[mm - 1]} ${y}</h3><span class="b">${money(ps.reduce((a, p) => a + Number(p.total), 0))}</span></div>
       ${ps.map(p => { const d = pd(p.fecha); return `<div class="hrow" onclick="this.querySelector('.det').classList.toggle('hide')">
         <div class="dt"><b>${d.getDate()}</b><span>${DN[d.getDay()]}</span></div>
-        <div class="grow"><div class="b">${p.tiempo_emoji || ''} ${esc(p.tiempo)}</div><div class="small muted">${p.items.map(i => `${i.cantidad}× ${esc(i.nombre)}`).join(' · ')}</div>
+        <div class="grow"><div class="b">${p.tiempo_emoji || ''} ${esc(p.tiempo)} ${p.para_llevar ? '<span class="tag-llevar">🥡</span>' : ''}</div><div class="small muted">${p.items.map(i => `${i.cantidad}× ${esc(i.nombre)}`).join(' · ')}</div>
           <div class="det hide small mt">${p.peticion ? `📝 ${esc(p.peticion)}<br>` : ''}Pedido #${p.numero} · ${badge(p.estado)}${p.editado_servicio ? ' · <span class="tiny muted">ajustado en servicio</span>' : ''}</div></div>
         <b>${money(p.total)}</b></div>`; }).join('')}`; }).join('')
       : '<div class="empty"><div class="e">🍽️</div>Aún no tienes consumos registrados.</div>'}
@@ -1220,7 +1244,8 @@ function drawCocina() {
     const pr = p.items.filter(i => i.tipo === 'principal'), sd = p.items.filter(i => i.tipo !== 'principal');
     return `<ul class="kitems">${pr.map(i => `<li><span class="q">${i.cantidad}×</span><span>${esc(i.nombre)}${i.nota ? `<span class="nt">↳ ${esc(i.nota)}</span>` : ''}</span></li>`).join('')}
       ${sd.map(i => `<li class="ks"><span class="q">${i.cantidad}×</span><span>${esc(i.nombre)}${i.nota ? `<span class="nt">↳ ${esc(i.nota)}</span>` : ''}</span></li>`).join('')}</ul>
-      ${p.peticion ? `<div class="knote">📝 ${esc(p.peticion)}</div>` : ''}`;
+      ${p.peticion ? `<div class="knote">📝 ${esc(p.peticion)}</div>` : ''}
+      ${p.para_llevar ? '<div class="kllevar">🥡 PARA LLEVAR</div>' : ''}`;
   };
   const card = (p, acts, since) => `<div class="kcard ${K.fresh?.has(p.id) ? 'fresh' : ''}">
     <div class="kh">${fotoImg(p.usuario_id, p.nombre, p.apellidos, 'av', 54)}
@@ -1301,7 +1326,7 @@ function drawServicio() {
       <div class="under ${p.estado === 'listo' ? 'serve' : ''}">${p.estado === 'listo' ? '🛎️ Servir →' : '✓ Entregar →'}</div>
       <div class="scard ${p.estado}">${fotoImg(p.usuario_id, p.nombre, p.apellidos, 'av', 92)}
         <div class="grow"><div class="row sp"><span class="num">#${p.numero}</span>${badge(p.estado)}</div>
-          <div class="nm">${esc(p.nombre)} ${esc(p.apellidos)}</div>
+          <div class="nm">${esc(p.nombre)} ${esc(p.apellidos)}</div>${p.para_llevar ? '<span class="tag-llevar" style="margin-top:4px">🥡 PARA LLEVAR</span>' : ''}
           <ul>${p.items.map(i => `<li>${i.cantidad}× ${esc(i.nombre)}</li>`).join('')}</ul>
           ${p.peticion ? `<div class="note" style="margin-top:6px">📝 ${esc(p.peticion)}</div>` : ''}
           <div class="hint">${p.estado === 'listo' ? 'Desliza → para empezar a servir' : 'Desliza → para entregar y cerrar'}</div></div></div></div>`;
@@ -1356,6 +1381,8 @@ function drawDetalle() {
       <h2 class="display mt" style="font-size:26px">${esc(p.nombre)} ${esc(p.apellidos)}</h2>
       <div class="row" style="justify-content:center;gap:8px;margin-top:6px"><span class="display b" style="color:var(--accent);font-size:22px">#${p.numero}</span>${badge(p.estado)}<span class="chip">${p.tiempo_emoji || ''} ${esc(p.tiempo)}</span></div></div>
     ${p.peticion ? `<div class="note mt">📝 ${esc(p.peticion)}</div>` : ''}
+    ${editable ? `<div class="llevar mt ${p.para_llevar ? 'on' : ''}" onclick="sLlevar(${!p.para_llevar})"><span class="e">🥡</span><div class="grow"><b>Para llevar</b><div class="tiny muted">${p.para_llevar ? 'Sí · toca para quitar' : 'No · toca para marcar'}${S.cfg.empaque_activo !== false && Number(S.cfg.empaque_precio) ? ' · empaque ' + money(S.cfg.empaque_precio) : ''}</div></div><span class="switch"><input type="checkbox" ${p.para_llevar ? 'checked' : ''} tabindex="-1" style="pointer-events:none"><span></span></span></div>`
+      : p.para_llevar ? '<div class="kllevar" style="background:var(--warn-soft)">🥡 PARA LLEVAR</div>' : ''}
     <div class="sec-title"><h3>Pedido</h3>${editable ? '<button class="btn soft sm" onclick="agregarItemServicio()">＋ Agregar</button>' : ''}</div>
     ${D.items.map((i, k) => `<div class="eitem ${i.agregado_servicio ? 'added' : ''}"><div class="grow"><b>${esc(i.nombre)}</b>${i.agregado_servicio ? ' <span class="tiny" style="color:#7a3db8">agregado</span>' : ''}${i.nota ? `<div class="tiny muted">${esc(i.nota)}</div>` : ''}<div class="tiny muted">${money(i.precio)} c/u</div></div>
       ${editable ? `<div class="step"><button onclick="dCant(${k},-1)">−</button><span>${i.cantidad}</span><button class="add" onclick="dCant(${k},1)">+</button></div>` : `<b>${i.cantidad}×</b>`}</div>`).join('') || '<p class="muted">Sin platos</p>'}
@@ -1398,6 +1425,11 @@ function addLibre() {
   const n = $('#libN').value.trim(); if (!n) return toast('Escribe qué se agrega', 'err');
   D.items.push({ plato_id: null, nombre: n, tipo: 'extra', categoria: 'Adicional', precio: Number($('#libP').value || 0), cantidad: 1, agregado_servicio: true });
   D.dirty = true; closeModal(); drawDetalle();
+}
+async function sLlevar(v) {
+  if (D.dirty) return toast('Primero guarda o descarta los cambios del pedido', 'info');
+  try { const r = await rpc('bistro_servicio_llevar', { p_id: D.p.id, p_valor: v }); D.p = r; D.items = r.items.map(i => ({ ...i })); toast(v ? '🥡 Marcado para llevar' : 'Ya no es para llevar', 'ok'); drawDetalle(); }
+  catch (e) { toast(errMsg(e), 'err'); }
 }
 async function guardarServicio() {
   try {
@@ -1484,19 +1516,31 @@ async function drawCatalogo() {
   const b = $('#mmBody');
   try { MM.cat = await rpc('bistro_menu', { p_desde: hoy(), p_hasta: hoy() }); } catch (e) { b.innerHTML = esc(errMsg(e)); return; }
   const m = MM.cat, TIPO = { principal: 'Plato', guarnicion: 'Acompañamiento', extra: 'Adicional' };
-  b.innerHTML = `<div class="row sp"><p class="small muted" style="margin:0">Organiza: <b>Tiempo de comida</b> (con su hora de corte) → <b>Categoría</b> → <b>Platos</b> con precio.</p>
+  const c = S.cfg;
+  b.innerHTML = `<div class="card mb"><div class="row wrap" style="gap:12px"><span style="font-size:30px">🥡</span>
+      <div class="grow" style="min-width:200px"><b style="font-size:16px">Empaque para llevar</b><div class="tiny muted">Se suma automáticamente cuando la persona marca “Para llevar”. Precio 0 = sin costo.</div></div>
+      <label class="row" style="gap:8px"><span class="switch"><input type="checkbox" id="emA" ${c.empaque_activo !== false ? 'checked' : ''}><span></span></span> Cobrar / registrar empaque</label></div>
+    <div class="grid2"><div><label class="f">Nombre</label><input class="inp" id="emN" value="${esc(c.empaque_nombre || 'Empaque para llevar')}"></div>
+      <div class="grid2" style="gap:0 10px"><div><label class="f">Precio (${c.moneda || '₡'})</label><input class="inp" id="emP" type="number" inputmode="numeric" value="${Number(c.empaque_precio || 0)}"></div>
+      <div><label class="f">Se cobra</label><select class="inp" id="emM"><option value="pedido" ${c.empaque_modo !== 'plato' ? 'selected' : ''}>1 por pedido</option><option value="plato" ${c.empaque_modo === 'plato' ? 'selected' : ''}>1 por plato principal</option></select></div></div></div>
+    <div class="row mt"><button class="btn acc sm" onclick="guardarEmpaque()">💾 Guardar empaque</button></div></div>
+    <div class="row sp"><p class="small muted" style="margin:0">Organiza: <b>Tiempo de comida</b> (con su hora de corte) → <b>Categoría</b> → <b>Platos</b> con precio.</p>
       <button class="btn acc sm" onclick="formCat('tiempo')">＋ Tiempo de comida</button></div>
     ${m.tiempos.map(t => `<div class="tree-t mt ${t.activo === false ? 'pl-row inact' : ''}">
       <div class="row"><span style="font-size:26px">${t.emoji || '🍽️'}</span><div class="grow"><b style="font-size:17px">${esc(t.nombre)}</b>${t.activo === false ? ' <span class="badge st-inactivo">inactivo</span>' : ''}
         <div class="tiny muted">${t.hora_corte ? `Corte ${hora12(t.hora_corte)}${t.dias_antes ? `, ${t.dias_antes} día(s) antes` : ' del mismo día'}` : 'Sin hora de corte'}</div></div>
         <button class="btn ghost sm" onclick="formCat('tiempo','${t.id}')">✏️</button><button class="btn soft sm" onclick="formCat('categoria',null,'${t.id}')">＋ Categoría</button></div>
       ${m.categorias.filter(c => c.tiempo_id === t.id).map(c => `<div class="tree-c">
-        <div class="row"><b class="grow">${c.emoji || '🍴'} ${esc(c.nombre)}${c.activo === false ? ' <span class="badge st-inactivo">inactiva</span>' : ''}</b>
+        <div class="row"><div class="grow"><b>${c.emoji || '🍴'} ${esc(c.nombre)}${c.activo === false ? ' <span class="badge st-inactivo">inactiva</span>' : ''}</b>${c.descripcion ? `<div class="tiny muted">${esc(c.descripcion)}</div>` : ''}</div>
           <button class="btn ghost sm" onclick="formCat('categoria','${c.id}')">✏️</button><button class="btn soft sm" onclick="formCat('plato',null,'${c.id}')">＋ Plato</button></div>
         ${m.platos.filter(p => p.categoria_id === c.id).map(p => `<div class="pl-row ${p.activo === false ? 'inact' : ''}">
           <div class="grow"><b>${esc(p.nombre)}</b> <span class="typ">${TIPO[p.tipo]}</span>${p.descripcion ? `<div class="tiny muted">${esc(p.descripcion)}</div>` : ''}</div>
           <b>${money(p.precio)}</b><button class="icon-btn" style="width:34px;height:34px;font-size:15px" onclick="formCat('plato','${p.id}')">✏️</button></div>`).join('') || '<div class="tiny muted mt">Sin platos</div>'}
       </div>`).join('')}</div>`).join('') || '<div class="empty"><div class="e">🍽️</div>Crea tu primer tiempo de comida (ej. Desayuno, Almuerzo).</div>'}`;
+}
+async function guardarEmpaque() {
+  const p = { empaque_activo: $('#emA').checked, empaque_nombre: $('#emN').value.trim(), empaque_precio: Number($('#emP').value || 0), empaque_modo: $('#emM').value };
+  try { const cfg = await rpc('bistro_empaque_guardar', { p }); Object.assign(S.cfg, cfg); toast('Empaque guardado 🥡', 'ok'); } catch (e) { toast(errMsg(e), 'err'); }
 }
 function formCat(tipo, id, padre) {
   const m = MM.cat, src = id ? (tipo === 'tiempo' ? m.tiempos : tipo === 'categoria' ? m.categorias : m.platos).find(x => x.id === id) : {};
@@ -1506,7 +1550,8 @@ function formCat(tipo, id, padre) {
   if (tipo !== 'plato') campos += `<div><label class="f">Emoji</label><input class="inp" id="fcE" value="${esc(x.emoji || (tipo === 'tiempo' ? '🍽️' : '🍴'))}" maxlength="4"></div></div>`;
   if (tipo === 'tiempo') campos += `<div class="grid2"><div><label class="f">Hora de corte (vacío = sin corte)</label><input class="inp" type="time" id="fcH" value="${(x.hora_corte || '').slice(0, 5)}"></div>
     <div><label class="f">¿Cuándo es el corte?</label><select class="inp" id="fcD">${[0, 1, 2].map(n => `<option value="${n}" ${+x.dias_antes === n ? 'selected' : ''}>${n === 0 ? 'El mismo día' : n === 1 ? 'El día anterior' : '2 días antes'}</option>`).join('')}</select></div></div>`;
-  if (tipo === 'categoria') campos += `<label class="f">Tiempo de comida</label><select class="inp" id="fcP">${m.tiempos.map(t => `<option value="${t.id}" ${(x.tiempo_id || padre) === t.id ? 'selected' : ''}>${esc(t.nombre)}</option>`).join('')}</select>`;
+  if (tipo === 'categoria') campos += `<label class="f">Descripción (opcional, la ven al pedir)</label><input class="inp" id="fcCd" value="${esc(x.descripcion || '')}" placeholder="Ej.: ₡5 500 · incluye ensalada verde">
+    <label class="f">Tiempo de comida</label><select class="inp" id="fcP">${m.tiempos.map(t => `<option value="${t.id}" ${(x.tiempo_id || padre) === t.id ? 'selected' : ''}>${esc(t.nombre)}</option>`).join('')}</select>`;
   if (tipo === 'plato') campos += `<div><label class="f">Precio (${S.cfg.moneda || '₡'})</label><input class="inp" id="fcPr" type="number" inputmode="numeric" value="${x.precio ?? ''}"></div></div>
     <label class="f">Descripción (opcional)</label><input class="inp" id="fcDs" value="${esc(x.descripcion || '')}">
     <div class="grid2"><div><label class="f">Tipo</label><select class="inp" id="fcT">
@@ -1523,7 +1568,7 @@ function formCat(tipo, id, padre) {
     if (!p.nombre) return toast('Falta el nombre', 'err');
     if (tipo !== 'plato') p.emoji = $('#fcE').value.trim();
     if (tipo === 'tiempo') { p.hora_corte = $('#fcH').value || null; p.dias_antes = +$('#fcD').value; }
-    if (tipo === 'categoria') p.tiempo_id = $('#fcP').value;
+    if (tipo === 'categoria') { p.tiempo_id = $('#fcP').value; p.descripcion = $('#fcCd').value.trim(); }
     if (tipo === 'plato') { p.precio = +$('#fcPr').value || 0; p.descripcion = $('#fcDs').value.trim(); p.tipo = $('#fcT').value; p.categoria_id = $('#fcP').value; }
     try { await rpc('bistro_catalogo_guardar', { p_tipo: tipo, p }); closeModal(); toast('Guardado', 'ok'); S.menu = null; drawCatalogo(); } catch (e) { toast(errMsg(e), 'err'); }
   };
@@ -1610,6 +1655,7 @@ function formUsuario(id) {
   $('#fuOk', ov).onclick = async () => {
     const p = { id: id || null, nombre: $('#fuN', ov).value, apellidos: $('#fuA', ov).value, correo: $('#fuC', ov).value, metodo: $('#fuM', ov).value, estado: $('#fuE', ov).value, roles: $$('.fuR', ov).filter(c => c.checked).map(c => c.value), foto: AD.fotoNueva || '' };
     if (!p.nombre || !p.apellidos || !/^\S+@\S+\.\S+$/.test(p.correo)) return toast('Revisa nombre, apellidos y correo', 'err');
+    if (!correoPermitido(p.correo)) return toast(`Solo se permiten correos ${dominiosTxt()}`, 'err');
     try { const r = await rpc('bistro_usuario_guardar', { p }); if (AD.fotoNueva) S.fotos[r.id] = { v: r.foto_v, src: AD.fotoNueva }; closeModal(ov); if (r.id === S.user.id) { S.user = { ...S.user, ...r }; renderShell(); S.view = 'admin'; } toast(id ? 'Usuario actualizado' : 'Usuario creado; se le envió un correo ✉️', 'ok'); viewAdmin($('#main')); } catch (e) { toast(errMsg(e), 'err'); }
   };
 }
@@ -1644,6 +1690,9 @@ async function drawConfig() {
     <div class="card"><h3>🔐 Sesiones y pedidos</h3>
       <div class="grid2"><div><label class="f">Duración de sesión (días)</label><input class="inp" type="number" id="cfSes" value="${c.sesion_dias}"></div>
         <div><label class="f">Vigencia del PIN (min)</label><input class="inp" type="number" id="cfPin" value="${c.pin_minutos}"></div></div>
+      <label class="f">Dominios de correo permitidos para registrarse</label>
+      <input class="inp" id="cfDom" value="${esc((c.dominios_permitidos || []).join(', '))}" placeholder="legrand.com, legrand-ext.com">
+      <p class="tiny muted" style="margin:4px 0 0">Separados por coma. Obligatorio: al menos uno.</p>
       <label class="f">Días de servicio</label><div class="row wrap" style="gap:6px">${DS.map((d, i) => `<label class="chip"><input type="checkbox" class="cfDS" value="${i + 1}" ${c.dias_servicio.includes(i + 1) ? 'checked' : ''} style="accent-color:var(--accent)"> ${d}</label>`).join('')}</div>
       <label class="f">Semanas futuras que se pueden pedir</label><select class="inp" id="cfSem">${[0, 1, 2, 3].map(n => `<option value="${n}" ${c.semanas_adelante === n ? 'selected' : ''}>${n === 0 ? 'Solo la semana actual' : `Actual + ${n}`}</option>`).join('')}</select>
       <label class="row mt" style="gap:12px"><span class="switch"><input type="checkbox" id="cfNot" ${c.notificar_listo ? 'checked' : ''}><span></span></span>
@@ -1660,9 +1709,12 @@ async function drawConfig() {
   $('#cfLogo').onchange = async e => { const f = e.target.files[0]; if (!f) return; AD.logo = await comprimirLogo(await fileToDataURL(f)); $('#cfLogoPrev').innerHTML = `<img class="logo-prev" src="${AD.logo}">`; };
 }
 async function guardarConfig() {
+  const dominios = $('#cfDom').value.split(/[,;\s]+/).map(x => x.trim().toLowerCase().replace(/^@/, '')).filter(Boolean);
+  if (!dominios.length) return toast(ERR.DOMINIOS_VACIO, 'err');
+  if (dominios.some(d => !/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(d))) return toast(ERR.DOMINIO_INVALIDO, 'err');
   const p = { app_nombre: $('#cfNom').value.trim() || 'ASETICINO', subtitulo: $('#cfSub').value.trim(), color: $('#cfCol').value, moneda: $('#cfMon').value || '₡',
     logo: AD.logo || '', sesion_dias: +$('#cfSes').value || 60, pin_minutos: +$('#cfPin').value || 10, dias_servicio: $$('.cfDS').filter(c => c.checked).map(c => +c.value),
-    semanas_adelante: +$('#cfSem').value, notificar_listo: $('#cfNot').checked, webhook_url: $('#cfWeb').value.trim(), app_url: $('#cfUrl').value.trim() };
+    semanas_adelante: +$('#cfSem').value, dominios_permitidos: dominios, notificar_listo: $('#cfNot').checked, webhook_url: $('#cfWeb').value.trim(), app_url: $('#cfUrl').value.trim() };
   try { await rpc('bistro_config_guardar', { p }); const r = await rpc('bistro_sesion'); S.cfg = r.config; aplicarMarca(); toast('Configuración guardada ✅', 'ok'); route(); } catch (e) { toast(errMsg(e), 'err'); }
 }
 async function probarCorreo() {
@@ -1711,7 +1763,7 @@ function csvReporte(tipo) {
   const q = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
   const rows = tipo === 'resumen'
     ? [['Colaborador', 'Correo', 'Pedidos', 'Total']].concat(AD.repData.lista.map(x => [x.nombre, x.correo, x.n, x.total]))
-    : [['Fecha', 'Tiempo', '#', 'Colaborador', 'Correo', 'Detalle', 'Estado', 'Total']].concat(AD.repData.data.map(r => [r.fecha, r.tiempo, r.numero, r.nombre, r.correo, r.items, r.estado, r.total]));
+    : [['Fecha', 'Tiempo', '#', 'Colaborador', 'Correo', 'Detalle', 'Para llevar', 'Estado', 'Total']].concat(AD.repData.data.map(r => [r.fecha, r.tiempo, r.numero, r.nombre, r.correo, r.items, r.para_llevar ? 'Sí' : 'No', r.estado, r.total]));
   const blob = new Blob(['﻿' + rows.map(r => r.map(q).join(';')).join('\r\n')], { type: 'text/csv;charset=utf-8' });
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `consumo_${tipo}_${AD.rep.desde}_${AD.rep.hasta}.csv`; a.click();
 }
@@ -1722,7 +1774,7 @@ function csvReporte(tipo) {
    las funciones de Supabase (bistro_supabase.sql).
    ===================================================================== */
 const Demo = (() => {
-  const KEY = 'bistro_demo_v5';
+  const KEY = 'bistro_demo_v8';
   let db;
   const uid = () => (crypto.randomUUID ? crypto.randomUUID() : 'id' + Math.random().toString(36).slice(2) + Date.now().toString(36));
   const now = () => new Date().toISOString();
@@ -1731,17 +1783,13 @@ const Demo = (() => {
   const mail = (para, asunto, extra = '') => setTimeout(() => toast(`📧 Correo a ${para}: ${asunto}${extra ? ' · ' + extra : ''}`, 'info', 6500), 300);
 
   function seed() {
-    const T = { d: uid(), a: uid() }, C = { des: uid(), dia: uid(), gri: uid(), esp: uid() };
-    const pl = (cat, nombre, desc, precio, tipo, orden) => ({ id: uid(), categoria_id: cat, nombre, descripcion: desc, precio, tipo, orden, activo: true });
-    const platos = [
-      pl(C.des, 'Pinto', 'Gallo pinto de la casa', 1200, 'principal', 1), pl(C.des, 'Huevos revueltos', '2 huevos', 600, 'guarnicion', 2),
-      pl(C.des, 'Huevos vuelta y vuelta', '2 huevos', 600, 'guarnicion', 3), pl(C.des, 'Queso', 'Porción de queso fresco', 500, 'guarnicion', 4),
-      pl(C.des, 'Natilla', '', 300, 'extra', 5), pl(C.des, 'Café', 'Chorreado', 400, 'extra', 6),
-      pl(C.dia, 'Arroz con pollo', 'Con ensalada y papas tostadas', 2800, 'principal', 1), pl(C.dia, 'Plato vegetariano', 'Opción del día sin carne', 2600, 'principal', 2),
-      pl(C.dia, 'Croquetas de papa', '', 700, 'guarnicion', 3), pl(C.dia, 'Ensalada verde', '', 500, 'guarnicion', 4), pl(C.dia, 'Fresco natural', 'Del día', 500, 'extra', 5),
-      pl(C.gri, 'Bistec', 'A la plancha con cebolla', 3500, 'principal', 1), pl(C.gri, 'Chuleta', 'Chuleta de cerdo', 3300, 'principal', 2),
-      pl(C.gri, 'Pescado', 'Filete a la plancha', 3600, 'principal', 3), pl(C.gri, 'Puré de papa', '', 600, 'guarnicion', 4), pl(C.gri, 'Arroz blanco', '', 400, 'guarnicion', 5),
-      pl(C.esp, 'Lasaña de la casa', 'Solo viernes', 4200, 'principal', 1)];
+    // Menú base (mismo que menu_inicial.sql)
+    const MENU_BASE = [{"nombre": "Desayuno", "emoji": "☀️", "corte": "06:00", "orden": 1, "cats": [{"nombre": "Desayuno", "emoji": "🍳", "desc": "Favor solicitar antes de las 6:00 a. m.", "items": [["Gallo pinto", "", 700, "principal"], ["Omelette sin olores", "", 1500, "principal"], ["Omelette con olores", "", 1500, "principal"], ["Empanada rellena de carne mechada", "", 1000, "principal"], ["Barra de frutas", "", 1150, "principal"], ["Plátano maduro", "", 200, "guarnicion"], ["Huevos revueltos", "", 500, "guarnicion"], ["Huevos fritos vuelta y vuelta", "", 500, "guarnicion"], ["Huevos fritos bien cocidos", "", 500, "guarnicion"], ["Huevos con tomate y cebolla", "", 500, "guarnicion"], ["Queso natural", "", 500, "guarnicion"], ["Queso frito", "", 500, "guarnicion"], ["Natilla", "", 500, "guarnicion"], ["Tortillas (2 und)", "", 200, "guarnicion"], ["Salchichón", "", 500, "guarnicion"]]}]}, {"nombre": "Almuerzo", "emoji": "🍛", "corte": "10:00", "orden": 2, "cats": [{"nombre": "Plato del día", "emoji": "🍲", "desc": "180 g – 200 g de proteína · ₡3 000", "items": [["Fajitas mixtas con cebolla y chile dulce salteadas", "Acompañadas de ensalada verde y una guarnición a elegir", 3000, "principal"], ["Vegetariano: huevos rellenos con aguacate", "Acompañados de ensalada verde y una guarnición a elegir", 3000, "principal"]]}, {"nombre": "A la plancha", "emoji": "🔥", "desc": "220 g – 250 g de proteína · incluye ensalada del día", "items": [["Pechuga de pollo", "", 3000, "principal"], ["Bistec de res", "", 3000, "principal"], ["Tilapia", "", 3000, "principal"]]}, {"nombre": "Arroz ejecutivo", "emoji": "🍤", "desc": "₡5 500 · incluye ensalada verde o especial del día y papas fritas", "items": [["Arroz con camarones", "", 5500, "principal"], ["Opción vegetariana: arroz jardinero mixto", "", 5500, "principal"]]}, {"nombre": "Mariscos", "emoji": "🦐", "desc": "₡5 500 · incluye ensalada verde o especial del día", "items": [["Ceviche de pescado", "Incluye chips", 5500, "principal"], ["Camarones en salsa de ajo", "Incluye pan de ajo", 5500, "principal"], ["Salmón", "Incluye patacones", 5500, "principal"]]}, {"nombre": "Pastas", "emoji": "🍝", "desc": "₡5 500 · incluye ensalada verde o especial del día", "items": [["Pasta con camarones en salsa roja", "Incluye pan de ajo", 5500, "principal"], ["Pasta con camarones en salsa blanca", "Incluye pan de ajo", 5500, "principal"], ["Opción vegetariana: ravioles de espinaca y queso", "", 5500, "principal"]]}, {"nombre": "Antojitos", "emoji": "🍔", "desc": "₡5 000", "items": [["Nachos mixtos (res y pollo)", "", 5000, "principal"], ["Hamburguesa de res (1/2 libra)", "Incluye papas fritas", 5000, "principal"], ["Opción vegetariana: hamburguesa vegetariana", "Incluye papas fritas", 5000, "principal"]]}, {"nombre": "Platillo tex mex", "emoji": "🌯", "desc": "₡5 500 · incluye ensalada verde", "items": [["Canasta de pollo", "", 5500, "principal"], ["Enchiladas de res", "", 5500, "principal"], ["Quesadillas mixtas (res y pollo)", "", 5500, "principal"]]}, {"nombre": "Ensalada del día", "emoji": "🥗", "desc": "", "items": [["Ensalada verde", "Lechuga, tomate, pepino y zanahoria", 900, "principal"], ["Ensalada caprese", "", 900, "principal"]]}, {"nombre": "Guarniciones a elegir", "emoji": "🍚", "desc": "", "items": [["Arroz blanco", "", 500, "guarnicion"], ["Frijoles rojos", "", 500, "guarnicion"], ["Chips", "", 200, "guarnicion"], ["Plátanos maduros", "", 200, "guarnicion"]]}, {"nombre": "Adicionales", "emoji": "➕", "desc": "", "items": [["Puré de ayote", "", 900, "extra"], ["Picadillo de chayote con zanahoria", "", 600, "extra"]]}]}, {"nombre": "Tarde", "emoji": "🥪", "corte": "14:00", "orden": 3, "cats": [{"nombre": "Paninis y sándwich", "emoji": "🥪", "desc": "Solo para las tardes · lechuga, tomate, queso fresco y salsas", "items": [["Panini de pollo", "", 1800, "principal"], ["Panini de roast beef", "", 1800, "principal"], ["Sándwich de jamón y queso", "Pan cuadrado", 1200, "principal"]]}]}];
+    const tiempos = [], categorias = [], platos = [];
+    MENU_BASE.forEach(t => { const tid = uid(); tiempos.push({ id: tid, nombre: t.nombre, emoji: t.emoji, hora_corte: t.corte + ':00', dias_antes: 0, orden: t.orden, activo: true });
+      t.cats.forEach((c, ci) => { const cid = uid(); categorias.push({ id: cid, tiempo_id: tid, nombre: c.nombre, emoji: c.emoji, descripcion: c.desc || null, orden: ci + 1, activo: true });
+        c.items.forEach(([nombre, desc, precio, tipo], ii) => platos.push({ id: uid(), categoria_id: cid, nombre, descripcion: desc, precio, tipo, orden: ii + 1, activo: true })); }); });
+    const T = { d: tiempos[0].id, a: tiempos[1].id };
     const users = [
       ['Kenneth', 'Sánchez', 'kenneth@empresa.com', 'kenneth', ['admin'], 'password', 210],
       ['María', 'Rojas', 'maria.rojas@empresa.com', null, ['cocina'], 'pin', 20],
@@ -1753,15 +1801,12 @@ const Demo = (() => {
       ['Andrés', 'Quesada', 'andres.quesada@empresa.com', null, [], 'pin', 260, 'pendiente'],
       ['Valeria', 'Mora', 'valeria.mora@empresa.com', 'vmora', [], 'password', 100, 'pendiente']
     ].map(([n, a, c, u, r, m, h, e]) => ({ id: uid(), nombre: n, apellidos: a, correo: c, usuario: u, password: u ? 'demo1234' : null, metodo: m, roles: r, estado: e || 'activo', foto: avatarSVG(n, a, h), foto_v: 1, debe_cambiar: false, ps: r.includes('admin') ? '24681357' : null, creado: now() }));
-    db = { seed: hoy(), cfg: { app_nombre: 'ASETICINO', subtitulo: 'Bistró', logo: null, color: '#2D4A6B', moneda: '₡', zona: 'America/Costa_Rica', sesion_dias: 60, pin_minutos: 10, dias_servicio: [1, 2, 3, 4, 5], semanas_adelante: 1, notificar_listo: false, webhook_url: '', app_url: '' },
+    db = { seed: hoy(), cfg: { app_nombre: 'ASETICINO', subtitulo: 'Bistró', logo: null, color: '#2D4A6B', moneda: '₡', zona: 'America/Costa_Rica', sesion_dias: 60, pin_minutos: 10, dias_servicio: [1, 2, 3, 4, 5], semanas_adelante: 1, notificar_listo: false, webhook_url: '', app_url: '', empaque_activo: true, empaque_nombre: 'Empaque para llevar', empaque_precio: 200, empaque_modo: 'pedido', dominios_permitidos: ['empresa.com', 'legrand.com', 'legrand-ext.com'] },
       usuarios: users, sesiones: {}, pins: {},
-      tiempos: [{ id: T.d, nombre: 'Desayuno', emoji: '☀️', hora_corte: '07:30:00', dias_antes: 0, orden: 1, activo: true }, { id: T.a, nombre: 'Almuerzo', emoji: '🍛', hora_corte: '10:30:00', dias_antes: 0, orden: 2, activo: true }],
-      categorias: [{ id: C.des, tiempo_id: T.d, nombre: 'Desayuno', emoji: '🍳', orden: 1, activo: true }, { id: C.dia, tiempo_id: T.a, nombre: 'Plato del día', emoji: '🍲', orden: 1, activo: true },
-        { id: C.gri, tiempo_id: T.a, nombre: 'Grill', emoji: '🔥', orden: 2, activo: true }, { id: C.esp, tiempo_id: T.a, nombre: 'Platillos especiales', emoji: '⭐', orden: 3, activo: true }],
-      platos, disp: [], pedidos: [] };
+      tiempos, categorias, platos, disp: [], pedidos: [] };
     // menú publicado: esta semana y la próxima (todos los días)
     const ws = weekStart(new Date());
-    for (let i = -7; i < 14; i++) { const d = addDays(ws, i); if (isoDow(d) > 5) continue; platos.forEach(p => { if (p.nombre === 'Lasaña de la casa' && isoDow(d) !== 5) return; db.disp.push({ fecha: ymd(d), plato_id: p.id, precio: null, agotado: false }); }); }
+    for (let i = -7; i < 14; i++) { const d = addDays(ws, i); if (isoDow(d) > 5) continue; platos.forEach(p => { db.disp.push({ fecha: ymd(d), plato_id: p.id, precio: null, agotado: false }); }); }
     // pedidos de hoy en distintos estados (para ver cocina y servicio)
     const f = hoy(), P = n => platos.find(p => p.nombre === n), U = n => users.find(u => u.nombre === n);
     const mk = (u, t, its, estado, pet, minAtras) => {
@@ -1769,14 +1814,14 @@ const Demo = (() => {
         t_preparando: estado !== 'pendiente' ? new Date(Date.now() - (minAtras - 2) * 60000).toISOString() : null, items: its.map(([n, q]) => { const p = P(n); return { id: uid(), plato_id: p.id, nombre: p.nombre, tipo: p.tipo, categoria: '', precio: p.precio, cantidad: q, nota: null }; }) };
       ped.total = ped.items.reduce((a, i) => a + i.precio * i.cantidad, 0); db.pedidos.push(ped);
     };
-    mk('Carlos', T.a, [['Arroz con pollo', 1], ['Croquetas de papa', 1]], 'listo', null, 22);
-    mk('Daniela', T.a, [['Bistec', 1], ['Puré de papa', 1]], 'sirviendo', 'Término medio', 25);
-    mk('José', T.a, [['Plato vegetariano', 1], ['Ensalada verde', 1]], 'preparando', 'Sin cebolla, por favor', 11);
-    mk('Sofía', T.a, [['Pescado', 1], ['Arroz blanco', 1], ['Fresco natural', 1]], 'pendiente', 'Salsa aparte', 4);
-    mk('Laura', T.a, [['Chuleta', 1]], 'pendiente', null, 2);
-    mk('María', T.d, [['Pinto', 1], ['Huevos revueltos', 1], ['Café', 1]], 'entregado', null, 240);
+    mk('Carlos', T.a, [['Fajitas mixtas con cebolla y chile dulce salteadas', 1], ['Arroz blanco', 1]], 'listo', null, 22);
+    mk('Daniela', T.a, [['Bistec de res', 1], ['Frijoles rojos', 1]], 'sirviendo', 'Término medio', 25); db.pedidos.at(-1).para_llevar = true;
+    mk('José', T.a, [['Vegetariano: huevos rellenos con aguacate', 1], ['Ensalada verde', 1]], 'preparando', 'Sin cebolla, por favor', 11);
+    mk('Sofía', T.a, [['Tilapia', 1], ['Arroz blanco', 1], ['Puré de ayote', 1]], 'pendiente', 'Salsa aparte', 4);
+    mk('Laura', T.a, [['Pasta con camarones en salsa blanca', 1]], 'pendiente', null, 2);
+    mk('María', T.d, [['Gallo pinto', 1], ['Huevos revueltos', 1], ['Natilla', 1]], 'entregado', null, 240);
     // historial: consumos entregados de las últimas 3 semanas
-    const menus = [[['Arroz con pollo', 1], ['Fresco natural', 1]], [['Bistec', 1], ['Arroz blanco', 1]], [['Plato vegetariano', 1]], [['Pescado', 1], ['Puré de papa', 1]], [['Chuleta', 1], ['Ensalada verde', 1]]];
+    const menus = [[['Fajitas mixtas con cebolla y chile dulce salteadas', 1], ['Puré de ayote', 1]], [['Bistec de res', 1], ['Arroz blanco', 1]], [['Vegetariano: huevos rellenos con aguacate', 1]], [['Tilapia', 1], ['Frijoles rojos', 1]], [['Pasta con camarones en salsa blanca', 1], ['Ensalada verde', 1]]];
     for (let i = 1; i <= 21; i++) {
       const d = addDays(new Date(), -i); if (isoDow(d) > 5) continue; const fd = ymd(d);
       users.filter(u => u.estado === 'activo').forEach((u, k) => {
@@ -1809,6 +1854,7 @@ const Demo = (() => {
     bistro_config_publica: () => cfgPub(),
     bistro_registrar({ p }) {
       const c = String(p.correo || '').trim().toLowerCase();
+      if (!db.cfg.dominios_permitidos.includes(c.split('@')[1] || '')) err('DOMINIO_NO_PERMITIDO');
       if (!p.nombre || !p.apellidos) err('DATOS_INCOMPLETOS'); if (!/^\S+@\S+\.\S+$/.test(c)) err('CORREO_INVALIDO'); if (!p.foto) err('FOTO_REQUERIDA');
       const ex = byEmail(c); if (ex && ex.estado !== 'rechazado') err('CORREO_EXISTE');
       if (p.metodo === 'password' && (p.password || '').length < 8) err('PASSWORD_CORTA');
@@ -1816,8 +1862,9 @@ const Demo = (() => {
       db.usuarios.push({ id: uid(), nombre: p.nombre.trim(), apellidos: p.apellidos.trim(), correo: c, usuario: null, password: p.metodo === 'password' ? p.password : null, metodo: p.metodo, roles: [], estado: 'pendiente', foto: p.foto, foto_v: 1, creado: now() });
       save(); mail(admins(), `Nueva solicitud de registro · ${p.nombre} ${p.apellidos}`); return { ok: true, estado: 'pendiente' };
     },
+    bistro_metodo_ingreso({ p_correo }) { const u = byEmail(p_correo); estadoErr(u); return { metodo: u.metodo === 'password' && u.password ? 'password' : 'pin' }; },
     bistro_pin_solicitar({ p_correo }) {
-      const u = byEmail(p_correo); estadoErr(u);
+      const u = byEmail(p_correo); estadoErr(u); if (u.metodo === 'password' && u.password) err('METODO_PASSWORD');
       const pin = String(Math.floor(Math.random() * 1e6)).padStart(6, '0'); db.pins[u.id] = { pin, exp: Date.now() + db.cfg.pin_minutos * 60000, n: 0 }; save();
       setTimeout(() => toast(`📧 (demo) PIN para ${u.correo}: ${pin}`, 'info', 15000), 400); return { ok: true, minutos: db.cfg.pin_minutos };
     },
@@ -1829,7 +1876,7 @@ const Demo = (() => {
     },
     bistro_login_pass({ p_usuario, p_password }) {
       const k = String(p_usuario || '').trim().toLowerCase(); const u = db.usuarios.find(x => (x.usuario || '').toLowerCase() === k || x.correo === k);
-      if (!u || !u.password) return { error: 'CREDENCIALES' }; estadoErr(u); if (u.password !== p_password) return { error: 'CREDENCIALES' };
+      if (!u) return { error: 'CREDENCIALES' }; estadoErr(u); if (u.metodo === 'pin' || !u.password) return { error: 'METODO_PIN' }; if (u.password !== p_password) return { error: 'CREDENCIALES' };
       return sesion(u);
     },
     bistro_sesion({ p_token }) { const u = auth(p_token); return { usuario: uj(u), config: cfgPub(), expira: db.sesiones[p_token].expira }; },
@@ -1880,7 +1927,9 @@ const Demo = (() => {
         return { id: uid(), plato_id: pl.id, nombre: pl.nombre, tipo: pl.tipo, categoria: cat.nombre, precio: Number(d.precio ?? pl.precio), cantidad: Math.max(1, i.cantidad | 0), nota: i.nota || null };
       });
       if (!ped) { ped = { id: uid(), numero: Math.max(0, ...db.pedidos.filter(x => x.fecha === p.fecha).map(x => x.numero)) + 1, usuario_id: u.id, fecha: p.fecha, tiempo_id: t.id, estado: 'pendiente', creado: now(), editado_servicio: false }; db.pedidos.push(ped); }
-      Object.assign(ped, { items, peticion: (p.peticion || '').trim() || null, total: items.reduce((a, i) => a + i.precio * i.cantidad, 0), modificado: now() });
+      const cf = db.cfg;
+      if (p.para_llevar && cf.empaque_activo) items.push({ id: uid(), plato_id: null, nombre: cf.empaque_nombre, tipo: 'empaque', categoria: 'Para llevar', precio: Number(cf.empaque_precio), cantidad: cf.empaque_modo === 'plato' ? Math.max(1, items.filter(i => i.tipo === 'principal').reduce((a, i) => a + i.cantidad, 0)) : 1, nota: null });
+      Object.assign(ped, { items, para_llevar: !!p.para_llevar, peticion: (p.peticion || '').trim() || null, total: items.reduce((a, i) => a + i.precio * i.cantidad, 0), modificado: now() });
       save(); return pj(ped);
     },
     bistro_mis_pedidos({ p_token, p_desde, p_hasta }) { const u = auth(p_token); return db.pedidos.filter(p => p.usuario_id === u.id && p.fecha >= p_desde && p.fecha <= p_hasta).sort((a, b) => b.fecha.localeCompare(a.fecha)).map(pj); },
@@ -1900,6 +1949,13 @@ const Demo = (() => {
       p.total = p.items.reduce((a, i) => a + i.precio * i.cantidad, 0); p.editado_servicio = true; p.modificado = now(); if (p.estado === 'listo') p.estado = 'sirviendo';
       save(); return pj(p);
     },
+    bistro_servicio_llevar({ p_token, p_id, p_valor }) {
+      req(auth(p_token), ['servicio']); const p = db.pedidos.find(x => x.id === p_id), cf = db.cfg; if (!['listo', 'sirviendo'].includes(p.estado)) err('SOLO_SERVICIO');
+      p.items = p.items.filter(i => i.tipo !== 'empaque');
+      if (p_valor && cf.empaque_activo) p.items.push({ id: uid(), plato_id: null, nombre: cf.empaque_nombre, tipo: 'empaque', categoria: 'Para llevar', precio: Number(cf.empaque_precio), cantidad: cf.empaque_modo === 'plato' ? Math.max(1, p.items.filter(i => i.tipo === 'principal').reduce((a, i) => a + i.cantidad, 0)) : 1, agregado_servicio: true });
+      p.para_llevar = !!p_valor; p.total = p.items.reduce((a, i) => a + i.precio * i.cantidad, 0); p.editado_servicio = true; if (p.estado === 'listo') p.estado = 'sirviendo'; p.modificado = now(); save(); return pj(p);
+    },
+    bistro_empaque_guardar({ p_token, p }) { req(auth(p_token), ['cocina']); Object.assign(db.cfg, p); save(); return cfgPub(); },
     bistro_usuarios_listar({ p_token }) { req(auth(p_token), []); return db.usuarios.map(u => ({ ...uj(u), sesiones: Object.values(db.sesiones).filter(s => s.uid === u.id).length })).sort((a, b) => (b.estado === 'pendiente') - (a.estado === 'pendiente') || a.nombre.localeCompare(b.nombre)); },
     bistro_usuario_aprobar({ p_token, p_id, p_aprobar, p_roles, p_motivo }) {
       req(auth(p_token), []); const u = db.usuarios.find(x => x.id === p_id); u.estado = p_aprobar ? 'activo' : 'rechazado'; if (p_aprobar) u.roles = p_roles || []; u.motivo = p_motivo;
@@ -1933,7 +1989,7 @@ const Demo = (() => {
     bistro_cerrar_todas_sesiones({ p_token }) { req(auth(p_token), []); let n = 0; Object.keys(db.sesiones).forEach(k => { if (k !== p_token) { delete db.sesiones[k]; n++; } }); save(); return { ok: true, cerradas: n }; },
     bistro_correo_diagnostico({ p_token }) { req(auth(p_token), []); return { tiene_webhook: !!db.cfg.webhook_url, webhook_inicio: (db.cfg.webhook_url || '').slice(0, 70), respuestas: [{ id: 1, status_code: 202, created: now() }, { id: 0, status_code: 401, created: now(), content: '{"error":{"code":"DirectApiAuthorizationRequired"}}' }] }; },
     bistro_config_admin({ p_token }) { req(auth(p_token), []); return db.cfg; },
-    bistro_config_guardar({ p_token, p }) { req(auth(p_token), []); Object.assign(db.cfg, p, { logo: p.logo || null }); save(); return db.cfg; },
+    bistro_config_guardar({ p_token, p }) { req(auth(p_token), []); if (p.dominios_permitidos && !p.dominios_permitidos.length) err('DOMINIOS_VACIO'); Object.assign(db.cfg, p, { logo: p.logo || null }); save(); return db.cfg; },
     bistro_correo_prueba({ p_token }) { const u = auth(p_token); req(u, []); mail(u.correo, 'Prueba de correo · Bistró'); return { ok: true }; },
     bistro_reporte({ p_token, p_desde, p_hasta }) {
       req(auth(p_token), ['cocina']);
